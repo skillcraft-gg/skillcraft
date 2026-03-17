@@ -55,6 +55,7 @@ ID, or browse the published registry index:
 ```bash
 skillcraft skills add acme/threat-model
 skillcraft skills add anthropic:xlsx
+skillcraft skills inspect anthropic:xlsx
 skillcraft skills search "threat model"
 skillcraft skills search --source anthropic parser
 ```

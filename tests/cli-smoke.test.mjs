@@ -207,6 +207,67 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('skills inspect shows manifest details', (t) => {
+    const repo = makeRepo(tempBase, 'skills-inspect')
+    runCli(['enable'], repo, cliEnv)
+    writeFileSync(
+      indexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'acme/xlsx',
+            name: 'XLSX Toolkit',
+            path: 'skills/acme/xlsx/',
+            url: 'https://github.com/anthropics/skills/blob/main/skills/xlsx/',
+            owner: 'acme',
+            slug: 'xlsx',
+            runtime: ['node'],
+            tags: ['data', 'office'],
+            updatedAt: '2026-03-17T12:00:00.000Z',
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const result = runCli(['skills', 'inspect', 'acme/xlsx'], repo, indexedCliEnv)
+    assertOk(t, result, 'skill: acme/xlsx')
+    assertOk(t, result, 'name: XLSX Toolkit')
+    assertOk(t, result, 'runtime: node')
+    assertOk(t, result, 'tags: data, office')
+    assertOk(t, result, 'manifest: https://github.com/anthropics/skills/raw/refs/heads/main/skills/xlsx/SKILL.md')
+    assert.ok(result.output.includes('manifest fetch:') || result.output.includes('manifest title:'))
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('skills inspect supports json output', (t) => {
+    const repo = makeRepo(tempBase, 'skills-inspect-json')
+    runCli(['enable'], repo, cliEnv)
+
+    writeFileSync(
+      indexFile,
+      JSON.stringify(
+        [
+          { id: 'acme/beta', name: 'Beta Skill', owner: 'acme', slug: 'beta', runtime: ['python'], tags: ['analysis'] },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const result = runCli(['skills', 'inspect', 'acme/beta', '--json'], repo, indexedCliEnv)
+    assert.equal(result.code, 0)
+    const payload = JSON.parse(result.output.trim())
+    assert.equal(payload.id, 'acme/beta')
+    assert.equal(payload.name, 'Beta Skill')
+    assert.deepStrictEqual(payload.runtime, ['python'])
+    assert.equal(payload.source, undefined)
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
   test('skills search supports limit', (t) => {
     const repo = makeRepo(tempBase, 'skills-search-limit')
     runCli(['enable'], repo, cliEnv)

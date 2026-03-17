@@ -43,6 +43,17 @@ type SearchResult = {
   tags?: string[]
 }
 
+type SkillInspectOptions = {
+  outputMode?: 'text' | 'json'
+}
+
+type SkillManifestDetails = {
+  url: string
+  title?: string
+  summary?: string
+  error?: string
+}
+
 export async function runSkillsPublish(slug: string): Promise<void> {
   const ref = assertNonEmpty(slug, 'skill id')
   const { owner, slug: slugPart } = splitArgPair(ref)
@@ -266,6 +277,246 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
   }
 
   process.stdout.write(`${title} (${shown.length}):\n${lines.join('\n')}\n`)
+}
+
+export async function runSkillsInspect(rawId: string, options: SkillInspectOptions = {}): Promise<void> {
+  const cleanId = assertNonEmpty(rawId, 'skill id')
+  const parsed = splitSkillIdentifier(cleanId)
+  if (!parsed.id) {
+    throw new Error('invalid skill id format')
+  }
+
+  const entries = await loadSearchIndexEntries(options.outputMode)
+  const match = entries.find((entry) => entry.id === parsed.id)
+  if (!match) {
+    throw new Error(`skill ${parsed.id} is not listed in the search index`)
+  }
+
+  const manifest = await loadSkillManifest(match)
+  if (options.outputMode === 'json') {
+    const payload = {
+      id: match.id,
+      name: match.name,
+      source: getSkillSource(match.id),
+      owner: match.owner,
+      slug: match.slug,
+      path: match.path,
+      url: match.url,
+      runtime: match.runtime,
+      tags: match.tags,
+      updatedAt: match.updatedAt,
+      manifest,
+      version: parsed.version,
+    }
+    process.stdout.write(`${JSON.stringify(payload)}\n`)
+    return
+  }
+
+  const lines = formatInspectOutput(match, manifest)
+  process.stdout.write(`${lines}\n`)
+}
+
+function formatInspectOutput(entry: SearchIndexEntry, manifest?: SkillManifestDetails): string {
+  const lines: string[] = []
+  lines.push(`skill: ${entry.id}`)
+
+  if (entry.name) {
+    lines.push(`name: ${entry.name}`)
+  }
+
+  const source = getSkillSource(entry.id)
+  if (source) {
+    lines.push(`source: ${source}`)
+  }
+
+  if (entry.owner) {
+    lines.push(`owner: ${entry.owner}`)
+  }
+
+  if (entry.slug) {
+    lines.push(`slug: ${entry.slug}`)
+  }
+
+  if (entry.runtime && entry.runtime.length) {
+    lines.push(`runtime: ${entry.runtime.join(', ')}`)
+  }
+
+  if (entry.tags && entry.tags.length) {
+    lines.push(`tags: ${entry.tags.join(', ')}`)
+  }
+
+  if (entry.updatedAt) {
+    lines.push(`updated: ${entry.updatedAt}`)
+  }
+
+  if (entry.path) {
+    lines.push(`path: ${entry.path}`)
+  }
+
+  if (entry.url) {
+    lines.push(`url: ${entry.url}`)
+  }
+
+  if (manifest) {
+    lines.push(`manifest: ${manifest.url}`)
+    if (manifest.title) {
+      lines.push(`manifest title: ${manifest.title}`)
+    }
+    if (manifest.summary) {
+      lines.push(`manifest summary: ${manifest.summary}`)
+    }
+    if (manifest.error) {
+      lines.push(`manifest fetch: ${manifest.error}`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+async function loadSkillManifest(entry: SearchIndexEntry): Promise<SkillManifestDetails | undefined> {
+  const manifestUrl = buildSkillManifestUrl(entry.url)
+  if (!manifestUrl) {
+    return undefined
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    controller.abort()
+  }, 5000)
+
+  try {
+    const response = await fetch(manifestUrl, {
+      headers: {
+        'user-agent': 'skillcraft-cli',
+      },
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      return {
+        url: manifestUrl,
+        error: `unable to fetch manifest (${response.status})`,
+      }
+    }
+
+    const text = await response.text()
+    if (isHtmlDocument(text)) {
+      return {
+        url: manifestUrl,
+        error: 'unable to parse manifest (not markdown)',
+      }
+    }
+    const parsed = parseSkillManifest(text)
+    return {
+      url: manifestUrl,
+      title: parsed.title,
+      summary: parsed.summary,
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        url: manifestUrl,
+        error: 'manifest fetch timed out',
+      }
+    }
+
+    return {
+      url: manifestUrl,
+      error: error instanceof Error ? error.message : 'failed to fetch manifest',
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function buildSkillManifestUrl(rawUrl?: string): string | undefined {
+  if (!rawUrl) {
+    return undefined
+  }
+
+  const url = rawUrl.trim()
+  if (!url) {
+    return undefined
+  }
+
+  const manifestUrl = url.endsWith('/SKILL.md') ? url : url.endsWith('/') ? `${url}SKILL.md` : `${url}/SKILL.md`
+  return toRawManifestUrl(manifestUrl)
+}
+
+function toRawManifestUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    if (parsed.hostname !== 'github.com') {
+      return rawUrl
+    }
+
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    const blobIndex = parts.indexOf('blob')
+    if (blobIndex !== 2 || parts.length < blobIndex + 2) {
+      return rawUrl
+    }
+
+    const owner = parts[0]
+    const repo = parts[1]
+    const remainingPath = parts.slice(blobIndex + 1)
+    if (!owner || !repo || !remainingPath.length) {
+      return rawUrl
+    }
+
+    const rawParts = [owner, repo, 'raw', 'refs', 'heads', ...remainingPath]
+    return `${parsed.protocol}//${parsed.host}/${rawParts.join('/')}`
+  } catch {
+    return rawUrl
+  }
+}
+
+function isHtmlDocument(input: string): boolean {
+  const text = input.replace(/^\s+/, '').toLowerCase()
+  return text.startsWith('<!doctype html') || text.startsWith('<html')
+}
+
+function parseSkillManifest(input: string): { title?: string; summary?: string } {
+  const normalized = input.replace(/\r\n/g, '\n')
+  const lines = normalized.split('\n')
+  let index = 0
+
+  if ((lines[0] || '').trim() === '---') {
+    index = 1
+    while (index < lines.length && lines[index].trim() !== '---') {
+      index += 1
+    }
+    if (index < lines.length && lines[index].trim() === '---') {
+      index += 1
+    }
+  }
+
+  let title: string | undefined
+  let summary: string | undefined
+
+  for (let i = index; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (!line) {
+      if (summary) {
+        break
+      }
+      continue
+    }
+
+    if (!title && line.startsWith('#')) {
+      title = line.replace(/^#+\s*/, '').trim()
+      continue
+    }
+
+    if (!summary && !line.startsWith('>')) {
+      summary = line
+      break
+    }
+  }
+
+  return {
+    title,
+    summary,
+  }
 }
 
 function isJson(value: unknown): value is SearchIndexEntry[] {

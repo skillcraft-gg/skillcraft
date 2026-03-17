@@ -5,7 +5,14 @@ import { runDoctor, runStatus } from './commands/status.js'
 import { runEnable } from './commands/enable.js'
 import { runReposList, runReposPrune } from './commands/repos.js'
 import { runProgress } from './commands/progress.js'
-import { runSkillsAdd, runSkillsList, runSkillsPublish, runSkillsSearch, runSkillsValidateAndExit } from './commands/skills.js'
+import {
+  runSkillsAdd,
+  runSkillsInspect,
+  runSkillsList,
+  runSkillsPublish,
+  runSkillsSearch,
+  runSkillsValidateAndExit,
+} from './commands/skills.js'
 import { runVerify } from './commands/verify.js'
 import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
 import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
@@ -65,6 +72,14 @@ skillsCommand
   .command('list')
   .description('List detected skills in the current repository')
   .action(withCommand(runSkillsList))
+
+skillsCommand
+  .command('inspect <id>')
+  .description('Show detailed information for a registry skill')
+  .action((id, _options, command) => {
+    const outputMode = command.parent?.parent?.opts()?.json ? 'json' : 'text'
+    withCommand(() => runSkillsInspect(id, { outputMode }))()
+  })
 
 skillsCommand
   .command('search [query]')
