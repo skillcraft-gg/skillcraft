@@ -236,7 +236,8 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
     const runtime = (entry.runtime || []).length ? ` [${entry.runtime!.join(', ')}]` : ''
     const tags = (entry.tags || []).length ? ` {${entry.tags!.join(', ')}}` : ''
     const updatedLabel = formatUpdatedAt(entry.updatedAt)
-    return `${entry.id} — ${entry.name || 'Unnamed'}${runtime}${tags}${updatedLabel}`
+    const name = formatSearchResultName(entry)
+    return `${entry.id}${name ? ` — ${name}` : ''}${runtime}${tags}${updatedLabel}`
   })
 
   if (options.outputMode === 'json') {
@@ -408,6 +409,37 @@ function getSkillSource(id: string): string | undefined {
 function getSearchLimit(raw: number | undefined): number {
   const requestedLimit = raw === undefined ? 20 : Math.floor(raw)
   return Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20
+}
+
+function formatSearchResultName(entry: SearchIndexEntry): string {
+  const name = (entry.name || '').trim()
+  if (!name) {
+    return ''
+  }
+
+  const slug = deriveSearchResultSlug(entry)
+  if (!slug) {
+    return name
+  }
+
+  if (name.toLowerCase() === slug.toLowerCase()) {
+    return ''
+  }
+
+  return name
+}
+
+function deriveSearchResultSlug(entry: SearchIndexEntry): string {
+  if (entry.slug && entry.slug.trim()) {
+    return entry.slug.trim()
+  }
+
+  const id = entry.id.trim()
+  const separator = id.indexOf(':')
+  const suffix = separator >= 0 ? id.slice(separator + 1) : id
+  const parts = suffix.split('/').filter(Boolean)
+
+  return parts.length ? parts.at(-1) : suffix
 }
 
 function formatUpdatedAt(value?: string): string {
