@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+import { Command } from 'commander'
+import { runDisable } from './commands/disable.js'
+import { runDoctor, runStatus } from './commands/status.js'
+import { runEnable } from './commands/enable.js'
+import { runReposList, runReposPrune } from './commands/repos.js'
+import { runProgress } from './commands/progress.js'
+import { runSkillsList, runSkillsPublish, runSkillsValidateAndExit } from './commands/skills.js'
+import { runVerify } from './commands/verify.js'
+import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
+import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
+import { runHook } from './commands/internalHook.js'
+
+const program = new Command()
+
+program.name('skillcraft').description('Skillcraft CLI').version('0.1.0')
+program.option('--json', 'machine-readable JSON output')
+
+program
+  .command('enable')
+  .description('Enable Skillcraft in the current repository')
+  .action(withCommand(runEnable))
+
+program
+  .command('disable')
+  .description('Disable Skillcraft in the current repository')
+  .action(withCommand(runDisable))
+
+program
+  .command('status')
+  .description('Show repository Skillcraft status')
+  .action(withCommand(runStatus))
+
+program
+  .command('doctor')
+  .description('Check environment and integration readiness')
+  .action(withCommand(runDoctor))
+
+const reposCommand = program.command('repos').description('Manage tracked repositories')
+reposCommand.command('list').description('List tracked repositories').action(withCommand(runReposList))
+reposCommand.command('prune').description('Remove unavailable repository entries').action(withCommand(runReposPrune))
+
+program
+  .command('progress')
+  .description('Show evidence progress for the current repository')
+  .action(withCommand(() => runProgress()))
+
+const skillsCommand = program.command('skills').description('Manage local skill publishing')
+skillsCommand
+  .command('publish <owner-slug>')
+  .description('Publish a skill to the registry')
+  .action((ownerSlug) => withCommand(() => runSkillsPublish(ownerSlug))())
+
+skillsCommand
+  .command('validate')
+  .description('Validate local skill layout')
+  .action(withCommand(runSkillsValidateAndExit))
+
+skillsCommand
+  .command('list')
+  .description('List detected skills in the current repository')
+  .action(withCommand(runSkillsList))
+
+program
+  .command('verify')
+  .description('Verify local Skillcraft proofs and trailers')
+  .action(withCommand(runVerify))
+
+const claimCommand = program.command('claim').description('Claim a credential or inspect claim issues')
+claimCommand
+  .argument('[credential]', 'credential identifier')
+  .option('--all-repos', 'include tracked repositories')
+  .option('--repo <path...>', 'explicit repositories to include')
+  .action((credential: string | undefined, options) => {
+    if (!credential) {
+      withCommand(() => runClaimList())()
+      return
+    }
+    withCommand(() =>
+      runClaim(credential, {
+        allRepos: options.allRepos,
+        repo: options.repo,
+      }),
+    )()
+  })
+
+claimCommand
+  .command('list')
+  .description('List claims in the credentials repository')
+  .action(withCommand(runClaimList))
+
+claimCommand
+  .command('status <issue>')
+  .description('Show claim issue status')
+  .action((issue) => withCommand(() => runClaimStatus(issue))())
+
+const loadoutCommand = program.command('loadout').description('Manage active loadouts')
+loadoutCommand
+  .command('use <id>')
+  .description('Activate a loadout in local context')
+  .action((id) => withCommand(() => runLoadoutUse(id))())
+
+loadoutCommand
+  .command('clear')
+  .description('Clear active loadouts')
+  .action(withCommand(runLoadoutClear))
+
+loadoutCommand
+  .command('share <id>')
+  .description('Publish local loadout to registry')
+  .action((id) => withCommand(() => runLoadoutShare(id))())
+
+program
+  .command('_hook <name> [repoPath]')
+  .description('internal hook command')
+  .action((name, repoPath) => withCommand(async () => {
+    if (name === 'post-commit') {
+      await runHook(repoPath || process.cwd())
+    }
+  })())
+
+function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | void>(fn: T): (...args: Parameters<T>) => void {
+  return (...args: Parameters<T>) => {
+    void Promise.resolve(fn(...args)).catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      process.exitCode = 1
+    })
+  }
+}
+
+program.parse(process.argv)

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env and local settings
+.env
+.env.*
+
+# editor / OS noise
+.DS_Store
+Thumbs.db
