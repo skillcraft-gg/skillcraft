@@ -235,9 +235,8 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
   const lines = shown.map((entry) => {
     const runtime = (entry.runtime || []).length ? ` [${entry.runtime!.join(', ')}]` : ''
     const tags = (entry.tags || []).length ? ` {${entry.tags!.join(', ')}}` : ''
-    const source = getSkillSource(entry.id)
-    const sourceLabel = source ? ` (${source})` : ''
-    return `${entry.id}${sourceLabel} — ${entry.name || 'Unnamed'}${runtime}${tags}`
+    const updatedLabel = formatUpdatedAt(entry.updatedAt)
+    return `${entry.id} — ${entry.name || 'Unnamed'}${runtime}${tags}${updatedLabel}`
   })
 
   if (options.outputMode === 'json') {
@@ -409,6 +408,19 @@ function getSkillSource(id: string): string | undefined {
 function getSearchLimit(raw: number | undefined): number {
   const requestedLimit = raw === undefined ? 20 : Math.floor(raw)
   return Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20
+}
+
+function formatUpdatedAt(value?: string): string {
+  if (!value) {
+    return ''
+  }
+
+  const updatedAt = new Date(value)
+  if (Number.isNaN(updatedAt.getTime())) {
+    return ''
+  }
+
+  return ` (updated ${updatedAt.toISOString().slice(0, 10)})`
 }
 
 async function exists(pathToCheck: string): Promise<boolean> {
