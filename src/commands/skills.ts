@@ -2,14 +2,46 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { getProvider } from '@/providers'
 import { loadGlobalConfig } from '@/core/config'
-import { assertNonEmpty, splitArgPair } from '@/core/validation'
+import { assertNonEmpty, splitArgPair, splitSkillIdentifier, normalizeSkillId } from '@/core/validation'
 import { isEnabled } from '@/core/state'
 import { loadProofFromRepo } from '@/core/progress'
-import { loadPending } from '@/core/proof'
+import { loadPending, normalizeSkillIds } from '@/core/proof'
+import { pendingPath } from '@/core/paths'
+import { writeJson } from '@/core/fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import ora from 'ora'
 
 const execPromise = promisify(execFile)
+
+type SearchIndexEntry = {
+  id: string
+  name?: string
+  path?: string
+  url?: string
+  owner?: string
+  slug?: string
+  runtime?: string[]
+  tags?: string[]
+  updatedAt?: string
+}
+
+type SearchIndexOptions = {
+  source?: string
+  limit?: number
+  outputMode?: 'text' | 'json'
+}
+
+type SearchResult = {
+  id: string
+  name?: string
+  path?: string
+  url?: string
+  owner?: string
+  slug?: string
+  runtime?: string[]
+  tags?: string[]
+}
 
 export async function runSkillsPublish(slug: string): Promise<void> {
   const ref = assertNonEmpty(slug, 'skill id')
@@ -62,6 +94,31 @@ export async function runSkillsPublish(slug: string): Promise<void> {
   }
 }
 
+export async function runSkillsAdd(rawId: string): Promise<void> {
+  const cwd = process.cwd()
+  if (!(await isEnabled(cwd))) {
+    throw new Error('Repository is not enabled')
+  }
+
+  const cleanInput = assertNonEmpty(rawId, 'skill id')
+  const parsed = splitSkillIdentifier(cleanInput)
+  if (!parsed.id) {
+    throw new Error('invalid skill id format')
+  }
+
+  const index = await loadSearchIndex()
+  if (!index.has(parsed.id)) {
+    throw new Error(`skill ${parsed.id} is not listed in the search index`)
+  }
+
+  const normalized = normalizeSkillIds([`${parsed.id}${parsed.version ? `@${parsed.version}` : ''}`])
+  const existing = await loadPending(cwd)
+  const next = normalizeSkillIds([...existing, ...normalized])
+
+  await writeJson(pendingPath(cwd), { skills: next })
+  process.stdout.write(`queued skill: ${normalized[0]}\n`)
+}
+
 export async function runSkillsValidate(): Promise<void> {
   const cwd = process.cwd()
   const checks = [
@@ -97,6 +154,261 @@ export async function runSkillsList(): Promise<void> {
 
   const list = Array.from(skills).sort().join('\n')
   process.stdout.write(`skills detected (${skills.size}):\n${list}\n`)
+}
+
+export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOptions = {}): Promise<void> {
+  const entries = await loadSearchIndexEntries(options.outputMode)
+  if (!entries.length) {
+    if (options.outputMode === 'json') {
+      process.stdout.write(`${JSON.stringify({
+        query: rawQuery?.trim(),
+        source: options.source?.trim(),
+        limit: getSearchLimit(options.limit),
+        count: 0,
+        results: [],
+        message: 'no skills indexed',
+      })}\n`)
+    } else {
+      process.stdout.write('no skills indexed\n')
+    }
+    return
+  }
+
+  const query = rawQuery?.trim().toLowerCase()
+  const sourceFilter = options.source?.trim().toLowerCase()
+  const limit = getSearchLimit(options.limit)
+
+  const filtered = entries.filter((entry) => {
+    if (sourceFilter) {
+      const source = getSkillSource(entry.id)
+      if (source !== sourceFilter) {
+        return false
+      }
+    }
+
+    if (!query) {
+      return true
+    }
+
+    const fields = [
+      entry.id,
+      entry.name,
+      entry.owner,
+      entry.slug,
+      entry.path,
+      entry.url,
+      ...(entry.runtime || []),
+      ...(entry.tags || []),
+    ].filter((value): value is string => !!value).map((value) => value.toLowerCase())
+
+    return fields.some((value) => value.includes(query))
+  })
+
+  const sorted = [...filtered].sort((left, right) => {
+    const leftName = (left.name || left.id).toLowerCase()
+    const rightName = (right.name || right.id).toLowerCase()
+    if (leftName === rightName) {
+      return left.id.localeCompare(right.id)
+    }
+    return leftName.localeCompare(rightName)
+  })
+
+  const shown = sorted.slice(0, limit)
+  if (!shown.length) {
+    const message = query ? `no skills match "${rawQuery?.trim()}"` : 'no skills match current filters'
+    if (options.outputMode === 'json') {
+      process.stdout.write(`${JSON.stringify({
+        query: rawQuery?.trim(),
+        source: options.source?.trim(),
+        limit,
+        count: 0,
+        results: [],
+        message,
+      })}\n`)
+    } else {
+      process.stdout.write(`${message}\n`)
+    }
+    return
+  }
+
+  const title = query ? `skills matching "${rawQuery?.trim()}"` : 'skills index'
+  const lines = shown.map((entry) => {
+    const runtime = (entry.runtime || []).length ? ` [${entry.runtime!.join(', ')}]` : ''
+    const tags = (entry.tags || []).length ? ` {${entry.tags!.join(', ')}}` : ''
+    const source = getSkillSource(entry.id)
+    const sourceLabel = source ? ` (${source})` : ''
+    return `${entry.id}${sourceLabel} — ${entry.name || 'Unnamed'}${runtime}${tags}`
+  })
+
+  if (options.outputMode === 'json') {
+    const payload = {
+      query: rawQuery?.trim(),
+      source: options.source?.trim(),
+      limit,
+      count: shown.length,
+      total: sorted.length,
+      results: shown.map((entry) => {
+        const row: SearchResult = {
+          id: entry.id,
+          name: entry.name,
+          path: entry.path,
+          url: entry.url,
+          owner: entry.owner,
+          slug: entry.slug,
+          runtime: entry.runtime,
+          tags: entry.tags,
+        }
+        return row
+      }),
+    }
+    process.stdout.write(`${JSON.stringify(payload)}\n`)
+    return
+  }
+
+  process.stdout.write(`${title} (${shown.length}):\n${lines.join('\n')}\n`)
+}
+
+function isJson(value: unknown): value is SearchIndexEntry[] {
+  return Array.isArray(value)
+}
+
+async function loadSearchIndex(): Promise<Set<string>> {
+  const entries = await loadSearchIndexEntries()
+  return new Set(entries.map((entry) => entry.id))
+}
+
+async function loadSearchIndexEntries(outputMode: SearchIndexOptions['outputMode'] = undefined): Promise<SearchIndexEntry[]> {
+  const explicitPath = process.env.SKILLCRAFT_SEARCH_INDEX_PATH?.trim()
+  const source = explicitPath || process.env.SKILLCRAFT_SEARCH_INDEX_URL || 'https://skillcraft.gg/skills/search/index.json'
+  const loadEntries = async () => {
+    if (explicitPath) {
+      const raw = await fs.readFile(explicitPath, 'utf8')
+      const parsed = JSON.parse(raw)
+      return normalizeSearchIndexEntries(isJson(parsed) ? parsed : [])
+    }
+
+    const url = process.env.SKILLCRAFT_SEARCH_INDEX_URL || 'https://skillcraft.gg/skills/search/index.json'
+    const response = await fetch(url, {
+      headers: {
+        'user-agent': 'skillcraft-cli',
+      },
+    })
+    if (!response.ok) {
+      throw new Error(`failed to download search index from ${url}`)
+    }
+
+    const parsed = await response.json()
+    return normalizeSearchIndexEntries(isJson(parsed) ? parsed : [])
+  }
+
+  if (!shouldShowSearchSpinner(outputMode)) {
+    return loadEntries()
+  }
+
+  const action = explicitPath ? `reading local index from ${source}` : `downloading index from ${source}`
+  const spinner = ora({
+    text: `Loading ${action}...`,
+  }).start()
+
+  try {
+    const entries = await loadEntries()
+    spinner.succeed(`loaded ${entries.length} indexed entries`)
+    return entries
+  } catch (error) {
+    spinner.fail('failed to load search index')
+    throw error
+  }
+}
+
+function shouldShowSearchSpinner(outputMode: SearchIndexOptions['outputMode']): boolean {
+  if (outputMode !== 'text') {
+    return false
+  }
+
+  return process.stdout.isTTY === true || process.stderr.isTTY === true
+}
+
+function normalizeSearchIndexEntries(entries: SearchIndexEntry[]): SearchIndexEntry[] {
+  return entries
+    .map((entry) => normalizeSearchIndexEntry(entry))
+    .filter((entry): entry is SearchIndexEntry => !!entry)
+}
+
+function normalizeSearchIndexEntry(raw: SearchIndexEntry): SearchIndexEntry | undefined {
+  const rawId = normalizeString(raw.id)
+  const id = normalizeSkillId(rawId)
+  if (!id) {
+    return undefined
+  }
+
+  return {
+    id,
+    name: normalizeText(raw.name),
+    path: normalizeText(raw.path),
+    url: normalizeText(raw.url),
+    owner: normalizeText(raw.owner),
+    slug: normalizeText(raw.slug),
+    runtime: normalizeStringArray(raw.runtime),
+    tags: normalizeStringArray(raw.tags),
+    updatedAt: normalizeText(raw.updatedAt),
+  }
+}
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeText(value: unknown): string | undefined {
+  const text = normalizeString(value)
+  return text || undefined
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (value === undefined) {
+    return []
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const normalized: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      continue
+    }
+    const text = item.trim()
+    if (text) {
+      normalized.push(text)
+    }
+  }
+  return normalized
+}
+
+function getSkillSource(id: string): string | undefined {
+  const separatorIndex = id.indexOf(':')
+  if (separatorIndex < 1) {
+    return undefined
+  }
+
+  const source = id.slice(0, separatorIndex).trim()
+  if (!source) {
+    return undefined
+  }
+
+  return source.toLowerCase()
+}
+
+function getSearchLimit(raw: number | undefined): number {
+  const requestedLimit = raw === undefined ? 20 : Math.floor(raw)
+  return Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20
 }
 
 async function exists(pathToCheck: string): Promise<boolean> {

@@ -5,7 +5,7 @@ import { runDoctor, runStatus } from './commands/status.js'
 import { runEnable } from './commands/enable.js'
 import { runReposList, runReposPrune } from './commands/repos.js'
 import { runProgress } from './commands/progress.js'
-import { runSkillsList, runSkillsPublish, runSkillsValidateAndExit } from './commands/skills.js'
+import { runSkillsAdd, runSkillsList, runSkillsPublish, runSkillsSearch, runSkillsValidateAndExit } from './commands/skills.js'
 import { runVerify } from './commands/verify.js'
 import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
 import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
@@ -47,6 +47,11 @@ program
 
 const skillsCommand = program.command('skills').description('Manage local skill publishing')
 skillsCommand
+  .command('add <id>')
+  .description('Add a local or external skill from the registry index')
+  .action((id) => withCommand(() => runSkillsAdd(id))())
+
+skillsCommand
   .command('publish <owner-slug>')
   .description('Publish a skill to the registry')
   .action((ownerSlug) => withCommand(() => runSkillsPublish(ownerSlug))())
@@ -60,6 +65,16 @@ skillsCommand
   .command('list')
   .description('List detected skills in the current repository')
   .action(withCommand(runSkillsList))
+
+skillsCommand
+  .command('search [query]')
+  .description('Search the published skill index')
+  .option('--source <source>', 'filter to a registry source')
+  .option('--limit <n>', 'limit number of results', (value) => Number.parseInt(value, 10))
+  .action((query, options, command) => {
+    const outputMode = command.parent?.parent?.opts()?.json ? 'json' : 'text'
+    withCommand(() => runSkillsSearch(query, { source: options.source, limit: options.limit, outputMode }))()
+  })
 
 program
   .command('verify')

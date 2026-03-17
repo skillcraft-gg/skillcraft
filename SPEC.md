@@ -75,9 +75,20 @@ Claims:
   claim status          Show status of submitted claims
 
 Skills:
-  skills add <id>       Install a skill from the registry
-  skills publish <id>   Publish a skill to the registry
-  skills validate       Validate a local skill against the standard
+   skills add <id>       Install a skill from the registry
+   skills search [query] Browse skills from the published search index
+   skills publish <id>   Publish a skill to the registry
+   skills validate       Validate a local skill against the standard
+
+`skills search` reads the published registry index and supports:
+
+- `--source <source>` to filter results to one registry source
+- `--limit <n>` to cap displayed results
+
+`skills add` supports both local and external identifiers:
+
+- `owner/slug` for skills in `skillcraft-gg/skills`
+- `source:slug` or `source:owner/slug` for external registries
 
 Loadouts:
   loadout use <id>      Activate a loadout for development
@@ -179,9 +190,13 @@ Example:
 
 {
   "skills": [
-    "blairhudson/threat-model@sha256:abc123"
+    "blairhudson/threat-model@sha256:abc123",
+    "anthropic:xlsx"
   ]
 }
+
+`source:...` denotes a non-local source and is only accepted for `skills add` / queued
+skills. Loadout IDs remain local `owner/slug` only.
 
 The commit hook converts pending events into proof objects.
 

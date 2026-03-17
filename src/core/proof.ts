@@ -4,16 +4,15 @@ import { ensureDir, readJson, writeJson } from './fs.js'
 import { localProofsDir, pendingPath, contextPath } from './paths.js'
 import { PendingSchema, ContextSchema, type Proof } from './types.js'
 import { gitCommitMessage } from './git.js'
-import { isValidIdentifier, splitIdentifierAndVersion } from './validation.js'
+import { isValidSkillIdentifier, splitSkillIdentifier } from './validation.js'
 
 function parseSkillFromRaw(value: string): { id: string; version?: string } | undefined {
-  const trimmed = value.trim()
-  if (!isValidIdentifier(trimmed)) {
+  const parsed = splitSkillIdentifier(value)
+  if (!parsed.id) {
     return undefined
   }
 
-  const parsed = splitIdentifierAndVersion(trimmed)
-  if (!parsed.id) {
+  if (!isValidSkillIdentifier(parsed.id)) {
     return undefined
   }
 
@@ -24,7 +23,13 @@ function parseSkillFromRaw(value: string): { id: string; version?: string } | un
 }
 
 export function normalizeSkillIds(raw: string[]): string[] {
-  return Array.from(new Set(raw.filter(Boolean).map((item) => item.trim()).sort())).filter((value) => isValidIdentifier(value))
+  const normalized = raw
+    .filter(Boolean)
+    .map((item) => splitSkillIdentifier(item))
+    .filter((entry): entry is { id: string; version?: string; slug: string } => !!entry.id)
+    .map((entry) => `${entry.id}${entry.version ? `@${entry.version}` : ''}`)
+
+  return Array.from(new Set(normalized)).filter(isValidSkillIdentifier).sort()
 }
 
 export function buildProofId(skills: string[], timestamp: string, loadouts: string[]): string {

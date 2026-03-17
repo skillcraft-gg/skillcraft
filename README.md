@@ -48,3 +48,13 @@ npm run smoke
 
 This keeps external dependencies out of the run and exercises the command
 surface (`enable`, `status`, `progress`, `loadout`, `skills`, `repos`, `disable`, and related paths).
+
+`skills add` and `skills search` are included in these flows. Queue local and external skills by
+ID, or browse the published registry index:
+
+```bash
+skillcraft skills add acme/threat-model
+skillcraft skills add anthropic:xlsx
+skillcraft skills search "threat model"
+skillcraft skills search --source anthropic parser
+```
