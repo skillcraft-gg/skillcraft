@@ -6,11 +6,12 @@ import {
   pluginPath,
   pendingPath,
   contextPath,
-  localProofsDir,
 } from '@/core/paths'
 import { ensureDir, writeJson } from '@/core/fs'
 import { addRepo, loadGlobalConfig, saveGlobalConfig } from '@/core/config'
 import { installPostCommitHook } from '@/core/hooks'
+import { DefaultProofRef } from '@/core/types'
+import { git, gitHasRef } from '@/core/git'
 
 export async function runEnable(): Promise<void> {
   const cwd = process.cwd()
@@ -26,10 +27,13 @@ export async function runEnable(): Promise<void> {
   }
 
   await ensureDir(localGitDir(root))
-  await ensureDir(localProofsDir(root))
+  const branchRef = `refs/heads/${DefaultProofRef}`
+  if (!(await gitHasRef(root, branchRef))) {
+    await git(['branch', DefaultProofRef], root)
+  }
   await writeJson(localSkillcraftConfig(root), {
     version: 1,
-    proofRef: 'refs/skillcraft/checkpoints/v1',
+    proofRef: DefaultProofRef,
   })
   await ensureDir(skillcraftGlobalDir())
   await writeJson(pendingPath(root), { skills: [] })

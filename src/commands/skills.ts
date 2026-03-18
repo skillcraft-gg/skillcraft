@@ -690,7 +690,7 @@ function deriveSearchResultSlug(entry: SearchIndexEntry): string {
   const suffix = separator >= 0 ? id.slice(separator + 1) : id
   const parts = suffix.split('/').filter(Boolean)
 
-  return parts.length ? parts.at(-1) : suffix
+  return parts.length ? parts[parts.length - 1] : suffix
 }
 
 function formatUpdatedAt(value?: string): string {

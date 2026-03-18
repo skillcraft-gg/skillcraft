@@ -4,12 +4,17 @@ import path from 'node:path'
 
 const execFile = promisify(execFileCb)
 
-export async function git(args: readonly string[], cwd: string): Promise<string> {
+type GitOptions = {
+  env?: NodeJS.ProcessEnv
+}
+
+export async function git(args: readonly string[], cwd: string, options: GitOptions = {}): Promise<string> {
   try {
     const { stdout } = await execFile('git', args, {
       cwd,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
+      env: options.env,
     })
     return stdout.trim()
   } catch (error) {
@@ -31,9 +36,9 @@ export async function gitRoot(cwd: string): Promise<string> {
   return path.resolve(await git(['rev-parse', '--show-toplevel'], cwd))
 }
 
-export async function gitRemote(cwd: string): Promise<string | undefined> {
+export async function gitRemote(cwd: string, remote = 'origin'): Promise<string | undefined> {
   try {
-    const value = await git(['config', '--get', 'remote.origin.url'], cwd)
+    const value = await git(['config', '--get', `remote.${remote}.url`], cwd)
     return value || undefined
   } catch {
     return undefined
@@ -46,6 +51,32 @@ export async function gitCommitMessage(cwd: string, commit = 'HEAD'): Promise<st
 
 export async function gitHeadCommit(cwd: string): Promise<string> {
   return (await git(['rev-parse', 'HEAD'], cwd)).trim()
+}
+
+export async function gitHasRef(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await git(['show-ref', '--verify', '--quiet', ref], cwd)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function gitLsTreeNames(cwd: string, ref: string, subPath?: string): Promise<string[]> {
+  try {
+    const raw = await git(['ls-tree', '-r', '--name-only', ref, '--', ...(subPath ? [subPath] : [])], cwd)
+    return raw ? raw.split('\n').filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+export async function gitShowText(cwd: string, ref: string, filePath: string): Promise<string | undefined> {
+  try {
+    return await git(['show', `${ref}:${filePath}`], cwd)
+  } catch {
+    return undefined
+  }
 }
 
 export async function gitLogWithMessages(cwd: string, maxCount?: number): Promise<Array<{ commit: string; message: string }>> {

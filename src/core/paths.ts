@@ -30,12 +30,16 @@ export function localSkillcraftConfig(repoPath: string): string {
   return path.join(localStateDir(repoPath), '.skillcraft.json')
 }
 
-export function localProofsDir(repoPath: string): string {
-  return path.join(repoPath, '.git', 'refs', 'skillcraft', 'checkpoints', 'v1')
-}
-
 export function localRepoHookPath(repoPath: string): string {
   return path.join(repoPath, '.git', 'hooks', 'post-commit')
+}
+
+export function localRepoPrePushHookPath(repoPath: string): string {
+  return path.join(repoPath, '.git', 'hooks', 'pre-push')
+}
+
+export function localRepoPostPushHookPath(repoPath: string): string {
+  return path.join(repoPath, '.git', 'hooks', 'post-push')
 }
 
 export function pendingPath(repoPath: string): string {

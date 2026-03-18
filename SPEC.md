@@ -171,7 +171,7 @@ Example .skillcraft.json:
 
 {
   "version": 1,
-  "proofRef": "refs/skillcraft/checkpoints/v1"
+  "proofRef": "skillcraft/proofs/v1"
 }
 
 Also installs:
@@ -205,7 +205,7 @@ The commit hook converts pending events into proof objects.
 
 Proof objects are stored under:
 
-refs/skillcraft/checkpoints/v1
+branch: skillcraft/proofs/v1
 
 Each commit receives a trailer referencing the proof:
 

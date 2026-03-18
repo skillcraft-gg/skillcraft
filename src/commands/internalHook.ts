@@ -1,4 +1,4 @@
-import { buildProofFromPending, buildCommitMessageWithProof } from '@/core/proof'
+import { buildProofFromPending, buildCommitMessageWithProof, pushProofBranch } from '@/core/proof'
 import { isEnabled } from '@/core/state'
 import { removeFile, writeJson } from '@/core/fs'
 import { pendingPath, contextPath } from '@/core/paths'
@@ -30,6 +30,10 @@ export async function runHook(repoPath: string): Promise<void> {
   }
 
   await writeJson(pendingPath(repoPath), { skills: [] })
+}
+
+export async function runHookPush(repoPath: string, remote = 'origin'): Promise<void> {
+  await pushProofBranch(repoPath, remote)
 }
 
 export async function runHookClear(repoPath: string): Promise<void> {

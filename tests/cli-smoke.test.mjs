@@ -350,6 +350,84 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('proofs are stored on proof branch', (t) => {
+    const repo = makeRepo(tempBase, 'proof-branch')
+    runCli(['enable'], repo, cliEnv)
+
+    const pending = join(repo, '.git', 'skillcraft', 'pending.json')
+    writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
+    writeFileSync(join(repo, 'proof.txt'), 'change\n')
+    runGit(repo, ['add', 'proof.txt'])
+    runGit(repo, ['commit', '-m', 'add proof file'])
+
+    const hookResult = runCli(['_hook', 'post-commit', repo], repo, cliEnv)
+    assertOk(t, hookResult, '')
+
+    const headMessage = runGit(repo, ['log', '-n', '1', '--pretty=%B'])
+    const match = headMessage.match(/Skillcraft-Ref:\s*(\S+)/)
+    assert.ok(match)
+    const proofId = match?.[1]
+    assert.equal(typeof proofId, 'string')
+
+    const proofFiles = runGit(repo, ['ls-tree', '-r', '--name-only', 'skillcraft/proofs/v1', '--', 'proofs'])
+    assert.ok(proofFiles.includes(`${`proofs`}/${proofId}.json`))
+
+    const proofJson = runGit(repo, [`show`, `skillcraft/proofs/v1:proofs/${proofId}.json`])
+    const proof = JSON.parse(proofJson)
+    assert.equal(typeof proof.commit, 'string')
+    assert.ok(proof.skills.some((entry) => entry.id === 'acme/alpha'))
+
+    const oldPath = join(repo, '.git', 'refs', 'skillcraft', 'checkpoints', 'v1')
+    assert.equal(existsSync(oldPath), false)
+
+    const result = runCli(['verify'], repo, cliEnv)
+    assertOk(t, result, `verify passed: 1 commit proofs resolved`)
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('verify reads proofs from remote branch', (t) => {
+    const sourceRepo = makeRepo(tempBase, 'verify-remote-source')
+    runCli(['enable'], sourceRepo, cliEnv)
+
+    const pending = join(sourceRepo, '.git', 'skillcraft', 'pending.json')
+    writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
+    writeFileSync(join(sourceRepo, 'proof.txt'), 'change\n')
+    runGit(sourceRepo, ['add', 'proof.txt'])
+    runGit(sourceRepo, ['commit', '-m', 'add proof file'])
+
+    assert.equal(existsSync(join(sourceRepo, '.git', 'hooks', 'post-commit')), true)
+    assert.equal(existsSync(join(sourceRepo, '.git', 'hooks', 'pre-push')), true)
+
+    const remote = join(tempBase, 'verify-remote-origin.git')
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+    runGit(sourceRepo, ['remote', 'add', 'origin', remote])
+
+    const hookResult = runCli(['_hook', 'post-commit', sourceRepo], sourceRepo, cliEnv)
+    assertOk(t, hookResult, '')
+
+    const headMessage = runGit(sourceRepo, ['log', '-n', '1', '--pretty=%B'])
+    const match = headMessage.match(/Skillcraft-Ref:\s*(\S+)/)
+    assert.ok(match)
+    assert.equal(typeof match?.[1], 'string')
+
+    runGit(sourceRepo, ['push', '--force', 'origin', 'HEAD'])
+
+    const remoteProofBranch = runGit(sourceRepo, ['ls-remote', '--heads', 'origin', 'skillcraft/proofs/v1'])
+    assert.ok(remoteProofBranch.includes('refs/heads/skillcraft/proofs/v1'))
+
+    const clone = join(tempBase, 'verify-remote-clone')
+    runGit(tempBase, ['clone', remote, clone])
+    mkdirSync(join(clone, '.skillcraft'), { recursive: true })
+    writeFileSync(join(clone, '.skillcraft', '.skillcraft.json'), JSON.stringify({ proofRef: 'skillcraft/proofs/v1' }))
+
+    const remoteResult = runCli(['verify'], clone, cliEnv)
+    assertOk(t, remoteResult, `verify passed: 1 commit proofs resolved`)
+
+    assert.equal(existsSync(join(clone, '.git', 'refs', 'heads', 'skillcraft', 'proofs', 'v1')), false)
+  })
+
   after(() => {
     rmSync(tempBase, { recursive: true, force: true })
   })

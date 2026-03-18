@@ -1,8 +1,6 @@
 import { isEnabled } from '@/core/state'
-import { localProofsDir } from '@/core/paths'
-import { fileExists, readJson } from '@/core/fs'
-import { parseProof } from '@/core/proof'
 import { gitLogWithMessages } from '@/core/git'
+import { readProof } from '@/core/proof'
 
 export async function runVerify(): Promise<void> {
   const repoPath = process.cwd()
@@ -10,15 +8,9 @@ export async function runVerify(): Promise<void> {
     throw new Error('Repository is not enabled')
   }
 
-  const proofDir = localProofsDir(repoPath)
-  const dirExists = await fileExists(proofDir)
-  if (!dirExists) {
-    throw new Error('No proof directory found. Run commits with pending events.')
-  }
-
   const messages = await gitLogWithMessages(repoPath, 200)
   const referenced = messages
-    .map((entry) => {
+    .map((entry: { message: string }) => {
       const match = entry.message.match(/Skillcraft-Ref:\s*(\S+)/)
       return match?.[1]
     })
@@ -26,9 +18,7 @@ export async function runVerify(): Promise<void> {
 
   let missing = 0
   for (const id of referenced) {
-    const file = `${proofDir}/${id}.json`
-    const payload = await readJson<unknown>(file)
-    const proof = parseProof(payload)
+    const proof = await readProof(repoPath, id)
     if (!proof) {
       missing += 1
       process.stdout.write(`missing proof object: ${id}\n`)

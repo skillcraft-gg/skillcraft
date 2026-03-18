@@ -1,4 +1,4 @@
-import { skillcraftGlobalDir, skillcraftConfigPath, skillcraftReposPath } from './paths.js'
+import { skillcraftGlobalDir, skillcraftConfigPath, skillcraftReposPath, localSkillcraftConfig } from './paths.js'
 import { ConfigSchema, ReposFileSchema, RepoEntry, type Config, type ReposFile } from './types.js'
 import { ensureDir, readJson, writeJson } from './fs.js'
 
@@ -8,6 +8,16 @@ export async function loadGlobalConfig(): Promise<Config> {
   if (!parsed.success) {
     return ConfigSchema.parse({})
   }
+  return parsed.data
+}
+
+export async function loadLocalConfig(repoPath: string): Promise<Config> {
+  const raw = await readJson<unknown>(localSkillcraftConfig(repoPath))
+  const parsed = ConfigSchema.safeParse(raw ?? {})
+  if (!parsed.success) {
+    return ConfigSchema.parse({})
+  }
+
   return parsed.data
 }
 

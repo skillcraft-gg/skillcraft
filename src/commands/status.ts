@@ -1,8 +1,9 @@
-import { isGitRepo, gitHeadCommit, gitLogWithMessages } from '@/core/git'
+import { isGitRepo, gitHeadCommit, gitLogWithMessages, gitHasRef } from '@/core/git'
 import { loadPending, currentProofIdForCommit } from '@/core/proof'
-import { localSkillcraftConfig, contextPath, localRepoHookPath, localProofsDir } from '@/core/paths'
+import { localSkillcraftConfig, contextPath, localRepoHookPath } from '@/core/paths'
 import { fileExists } from '@/core/fs'
 import { isEnabled } from '@/core/state'
+import { loadLocalConfig } from '@/core/config'
 
 export async function runStatus(): Promise<void> {
   const cwd = process.cwd()
@@ -32,8 +33,10 @@ export async function runStatus(): Promise<void> {
   const withSkillcraft = logs.filter((entry) => entry.message.includes('Skillcraft-Ref:'))
   process.stdout.write(`recent commits with evidence: ${withSkillcraft.length}\n`)
 
-  const proofDirExists = await fileExists(localProofsDir(cwd))
-  process.stdout.write(`proof dir: ${proofDirExists ? 'present' : 'missing'}\n`)
+  const config = await loadLocalConfig(cwd)
+  const branch = config.proofRef?.replace(/^refs\/heads\//, '') || 'skillcraft/proofs/v1'
+  const proofBranchExists = await gitHasRef(cwd, `refs/heads/${branch}`)
+  process.stdout.write(`proof branch: ${proofBranchExists ? 'present' : 'missing'}\n`)
 
   if (pending.length > 0) {
     process.stdout.write(`pending evidence queued: ${pending.join(', ')}\n`)

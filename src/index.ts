@@ -17,6 +17,7 @@ import { runVerify } from './commands/verify.js'
 import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
 import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
 import { runHook } from './commands/internalHook.js'
+import { runHookPush } from './commands/internalHook.js'
 
 const program = new Command()
 
@@ -141,11 +142,14 @@ loadoutCommand
   .action((id) => withCommand(() => runLoadoutShare(id))())
 
 program
-  .command('_hook <name> [repoPath]')
+  .command('_hook <name> [repoPath] [remote]')
   .description('internal hook command')
-  .action((name, repoPath) => withCommand(async () => {
+  .action((name, repoPath, remote) => withCommand(async () => {
     if (name === 'post-commit') {
       await runHook(repoPath || process.cwd())
+    }
+    if (name === 'pre-push' || name === 'post-push') {
+      await runHookPush(repoPath || process.cwd(), remote || 'origin')
     }
   })())
 

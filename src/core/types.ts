@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 export const ProofVersionSchema = z.literal(1)
 
+export const DefaultProofRef = 'skillcraft/proofs/v1'
+
 export const PendingSchema = z.object({
   skills: z.array(z.string()).default([]),
 })
@@ -14,6 +16,7 @@ export const ConfigSchema = z.object({
   githubUser: z.string().optional(),
   provider: z.enum(['gh']).default('gh'),
   version: z.number().int().default(1),
+  proofRef: z.string().default(DefaultProofRef),
 })
 
 export const RepoEntrySchema = z.object({
