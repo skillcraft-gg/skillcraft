@@ -18,6 +18,14 @@ export function skillcraftReposPath(): string {
   return path.join(skillcraftGlobalDir(), 'repos.json')
 }
 
+export function trackedCredentialsPath(): string {
+  return path.join(skillcraftGlobalDir(), 'credentials.json')
+}
+
+export function credentialIndexCachePath(): string {
+  return path.join(skillcraftGlobalDir(), 'cache', 'credentials', 'index.json')
+}
+
 export function localStateDir(repoPath: string): string {
   return path.join(repoPath, '.skillcraft')
 }

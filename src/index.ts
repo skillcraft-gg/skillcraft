@@ -4,7 +4,7 @@ import { runDisable } from './commands/disable.js'
 import { runDoctor, runStatus } from './commands/status.js'
 import { runEnable } from './commands/enable.js'
 import { runReposList, runReposPrune } from './commands/repos.js'
-import { runProgress } from './commands/progress.js'
+import { runProgress, runProgressTrack, runProgressUntrack } from './commands/progress.js'
 import {
   runSkillsAdd,
   runSkillsInspect,
@@ -48,10 +48,23 @@ const reposCommand = program.command('repos').description('Manage tracked reposi
 reposCommand.command('list').description('List tracked repositories').action(withCommand(runReposList))
 reposCommand.command('prune').description('Remove unavailable repository entries').action(withCommand(runReposPrune))
 
-program
-  .command('progress')
-  .description('Show evidence progress across tracked repositories')
-  .action(withCommand(() => runProgress()))
+const progressCommand = program.command('progress').description('Show progress for tracked credentials')
+progressCommand
+.option('--refresh', 'refresh the local credential index cache before evaluating progress')
+.action((options, command) => {
+  const outputMode = command.parent?.opts()?.json ? 'json' : 'text'
+  withCommand(() => runProgress({ outputMode, refreshIndex: options.refresh }))()
+})
+
+progressCommand
+  .command('track <credential-id>')
+  .description('Track a credential for local progress evaluation')
+  .action((credentialId: string) => withCommand(() => runProgressTrack(credentialId))())
+
+progressCommand
+  .command('untrack <credential-id>')
+  .description('Untrack a credential from local progress evaluation')
+  .action((credentialId: string) => withCommand(() => runProgressUntrack(credentialId))())
 
 const skillsCommand = program.command('skills').description('Manage local skill publishing')
 skillsCommand

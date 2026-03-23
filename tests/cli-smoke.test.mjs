@@ -47,6 +47,54 @@ function makeTempDir(name) {
   return mkdtempSync(dir)
 }
 
+function setCredentialCacheTimestamp(cachePath, timestampMs) {
+  if (!existsSync(cachePath)) {
+    return
+  }
+
+  const rawText = readFileSync(cachePath, 'utf8')
+  let payload = {}
+  try {
+    payload = JSON.parse(rawText)
+  } catch {
+    payload = {}
+  }
+
+  const nextPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? {
+          ...payload,
+          cachedAt: timestampMs,
+        }
+      : {
+          cachedAt: timestampMs,
+          version: 1,
+          entries: Array.isArray(payload) ? payload : [],
+        }
+
+  writeFileSync(cachePath, JSON.stringify(nextPayload))
+}
+
+function getCredentialCacheTimestamp(cachePath) {
+  if (!existsSync(cachePath)) {
+    return null
+  }
+
+  let payload = null
+  try {
+    payload = JSON.parse(readFileSync(cachePath, 'utf8'))
+  } catch {
+    return null
+  }
+
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+
+  const cachedAt = Number.parseInt(payload.cachedAt, 10)
+  return Number.isFinite(cachedAt) ? cachedAt : null
+}
+
 function makeRepo(parentDir, name) {
   const repoDir = join(parentDir, name)
   mkdirSync(repoDir)
@@ -73,10 +121,12 @@ describe('Skillcraft CLI surface smoke tests', () => {
   const home = join(tempBase, 'home')
   const plain = join(tempBase, 'plain')
   const indexFile = join(tempBase, 'search-index.json')
+  const credentialIndexFile = join(tempBase, 'credential-index.json')
   mkdirSync(home)
   mkdirSync(plain)
   const cliEnv = { ...process.env, HOME: home }
   const indexedCliEnv = { ...cliEnv, SKILLCRAFT_SEARCH_INDEX_PATH: indexFile }
+  const credentialCliEnv = { ...cliEnv, SKILLCRAFT_CREDENTIAL_INDEX_PATH: credentialIndexFile }
 
   test('help command', (t) => {
     const result = runCli(['--help'], plain, cliEnv)
@@ -337,7 +387,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
-  test('loadout progress and hook path', (t) => {
+  test('loadout command and progress baseline', (t) => {
     const repo = makeRepo(tempBase, 'loadout')
     let result = runCli(['enable'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
@@ -346,8 +396,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assertOk(t, result, 'activated loadout: acme/dev')
 
     result = runCli(['progress'], repo, cliEnv)
-    assertOk(t, result, 'commits-with-proof:')
-    assertOk(t, result, 'proof files:')
+    assertOk(t, result, 'no credentials tracked')
 
     result = runCli(['loadout', 'clear'], repo, cliEnv)
     assertOk(t, result, 'cleared active loadouts')
@@ -356,6 +405,227 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assert.equal(result.code, 0)
 
     runCli(['disable'], repo, cliEnv)
+  })
+
+  test('progress help documents --refresh', (t) => {
+    const result = runCli(['progress', '--help'], plain, cliEnv)
+    assertOk(t, result, '--refresh')
+  })
+
+  test('progress supports --refresh', (t) => {
+    const repo = makeRepo(tempBase, 'progress-refresh')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            name: 'Hello World',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    let result = runCli(['enable'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    try {
+      result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+      assertOk(t, result, 'tracking credential: skillcraft-gg/hello-world')
+
+      result = runCli(['--json', 'progress', '--refresh'], repo, credentialCliEnv)
+      assert.equal(result.code, 0)
+      const payload = JSON.parse(result.output.trim())
+      assert.equal(payload.trackedCredentials, 1)
+    } finally {
+      runCli(['progress', 'untrack', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+      runCli(['disable'], repo, cliEnv)
+    }
+  })
+
+  test('progress cache uses file timestamps and forced refresh', async (t) => {
+    const repo = makeRepo(tempBase, 'progress-cache-refresh')
+    const credentialCachePath = join(home, '.skillcraft', 'cache', 'credentials', 'index.json')
+
+    const remoteUrl = 'https://skillcraft.gg/credentials/credentials/index.json'
+    const remoteCredentialEnv = {
+      ...cliEnv,
+      SKILLCRAFT_CREDENTIAL_INDEX_URL: remoteUrl,
+    }
+    delete remoteCredentialEnv.SKILLCRAFT_CREDENTIAL_INDEX_PATH
+
+    try {
+      runCli(['enable'], repo, cliEnv)
+
+      let result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repo, remoteCredentialEnv)
+      assertOk(t, result, 'tracking credential: skillcraft-gg/hello-world')
+
+      result = runCli(['--json', 'progress'], repo, remoteCredentialEnv)
+      assert.equal(result.code, 0)
+      let payload = JSON.parse(result.output.trim())
+      assert.equal(payload.credentials[0].name, 'Hello World')
+
+      const firstCachedAt = getCredentialCacheTimestamp(credentialCachePath)
+      assert.ok(firstCachedAt)
+
+      setCredentialCacheTimestamp(credentialCachePath, firstCachedAt - 7 * 60 * 60 * 1000)
+
+      result = runCli(['--json', 'progress'], repo, remoteCredentialEnv)
+      assert.equal(result.code, 0)
+      payload = JSON.parse(result.output.trim())
+      assert.equal(payload.credentials[0].name, 'Hello World')
+      const secondCachedAt = getCredentialCacheTimestamp(credentialCachePath)
+      assert.ok(secondCachedAt)
+      assert.ok(secondCachedAt > firstCachedAt)
+
+      result = runCli(['--json', 'progress'], repo, remoteCredentialEnv)
+      assert.equal(result.code, 0)
+      payload = JSON.parse(result.output.trim())
+      assert.equal(payload.credentials[0].name, 'Hello World')
+      const thirdCachedAt = getCredentialCacheTimestamp(credentialCachePath)
+      assert.ok(thirdCachedAt)
+      assert.equal(thirdCachedAt, secondCachedAt)
+
+      result = runCli(['--json', 'progress', '--refresh'], repo, remoteCredentialEnv)
+      assert.equal(result.code, 0)
+      payload = JSON.parse(result.output.trim())
+      assert.equal(payload.credentials[0].name, 'Hello World')
+      const fourthCachedAt = getCredentialCacheTimestamp(credentialCachePath)
+      assert.ok(fourthCachedAt)
+      assert.ok(fourthCachedAt > thirdCachedAt)
+    } finally {
+      runCli(['progress', 'untrack', 'skillcraft-gg/hello-world'], repo, remoteCredentialEnv)
+      runCli(['disable'], repo, cliEnv)
+    }
+  })
+
+  test('progress track and untrack', (t) => {
+    const repo = makeRepo(tempBase, 'progress-track')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            name: 'Hello World',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    let result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+    assertOk(t, result, 'tracking credential: skillcraft-gg/hello-world')
+
+    result = runCli(['progress', 'track', 'missing/credential'], repo, credentialCliEnv)
+    assert.equal(result.code, 1)
+    assert.ok(result.output.includes('credential not found in credential index: missing/credential'))
+
+    result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+    assertOk(t, result, 'credential already tracked: skillcraft-gg/hello-world')
+
+    result = runCli(['progress', 'untrack', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+    assertOk(t, result, 'untracked credential: skillcraft-gg/hello-world')
+
+    result = runCli(['progress', 'untrack', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+    assertOk(t, result, 'credential not tracked: skillcraft-gg/hello-world')
+  })
+
+  test('progress evaluates tracked credentials', (t) => {
+    const repoA = makeRepo(tempBase, 'progress-agg-a')
+    const repoB = makeRepo(tempBase, 'progress-agg-b')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+          {
+            id: 'skillcraft-gg/alpha-beta',
+            requirements: {
+              min_repositories: 1,
+              and: [
+                {
+                  skill: 'acme/alpha',
+                },
+                {
+                  skill: 'acme/beta',
+                },
+              ],
+            },
+          },
+          {
+            id: 'skillcraft-gg/blocked',
+            requirements: {
+              min_commits: 3,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    let result = runCli(['enable'], repoA, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+    result = runCli(['enable'], repoB, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repoA, credentialCliEnv)
+    assertOk(t, result, 'tracking credential: skillcraft-gg/hello-world')
+    result = runCli(['progress', 'track', 'skillcraft-gg/alpha-beta'], repoA, credentialCliEnv)
+    assertOk(t, result, 'tracking credential: skillcraft-gg/alpha-beta')
+    result = runCli(['progress', 'track', 'skillcraft-gg/blocked'], repoA, credentialCliEnv)
+    assertOk(t, result, 'tracking credential: skillcraft-gg/blocked')
+
+    addTrackedProof(repoA, 'proof-a.txt', ['acme/alpha'], credentialCliEnv)
+    addTrackedProof(repoB, 'proof-b.txt', ['acme/beta'], credentialCliEnv)
+
+    try {
+      result = runCli(['--json', 'progress'], tempBase, credentialCliEnv)
+      assert.equal(result.code, 0)
+      const payload = JSON.parse(result.output.trim())
+      assert.equal(payload.trackedCredentials, 3)
+      assert.equal(payload.trackedRepositories, 2)
+      assert.equal(payload.evidence.proofFiles, 2)
+      assert.equal(payload.evidence.provenCommits, 2)
+
+      const helloWorld = payload.credentials.find((entry) => entry.credentialId === 'skillcraft-gg/hello-world')
+      assert.ok(helloWorld)
+      assert.equal(helloWorld.passed, true)
+
+      const alphaBeta = payload.credentials.find((entry) => entry.credentialId === 'skillcraft-gg/alpha-beta')
+      assert.ok(alphaBeta)
+      assert.equal(alphaBeta.passed, true)
+
+      const blocked = payload.credentials.find((entry) => entry.credentialId === 'skillcraft-gg/blocked')
+      assert.ok(blocked)
+      assert.equal(blocked.passed, false)
+      assert.ok(blocked.reasons.includes('minimum required commits not met: have 2, need 3'))
+    } finally {
+      runCli(['progress', 'untrack', 'skillcraft-gg/hello-world'], repoA, credentialCliEnv)
+      runCli(['progress', 'untrack', 'skillcraft-gg/alpha-beta'], repoA, credentialCliEnv)
+      runCli(['progress', 'untrack', 'skillcraft-gg/blocked'], repoA, credentialCliEnv)
+
+      runCli(['disable'], repoA, cliEnv)
+      runCli(['disable'], repoB, cliEnv)
+    }
   })
 
   test('verify baseline path', (t) => {
@@ -414,9 +684,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
-  test('progress aggregates across tracked repositories', (t) => {
-    const repoA = makeRepo(tempBase, 'progress-agg-a')
-    const repoB = makeRepo(tempBase, 'progress-agg-b')
+  test('progress handles multiple tracked repositories with no credentials tracked', (t) => {
+    const repoA = makeRepo(tempBase, 'progress-agg-c')
+    const repoB = makeRepo(tempBase, 'progress-agg-d')
 
     let result = runCli(['enable'], repoA, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
@@ -426,11 +696,13 @@ describe('Skillcraft CLI surface smoke tests', () => {
     addTrackedProof(repoA, 'proof-a.txt', ['acme/alpha'], cliEnv)
     addTrackedProof(repoB, 'proof-b.txt', ['acme/beta'], cliEnv)
 
-    result = runCli(['progress'], tempBase, cliEnv)
-    assertOk(t, result, 'commits-with-proof: 2')
-    assertOk(t, result, 'proof files: 2')
-    assertOk(t, result, 'unique skills: 2')
-    assertOk(t, result, 'skills: acme/alpha, acme/beta')
+    result = runCli(['--json', 'progress'], tempBase, cliEnv)
+    assert.equal(result.code, 0)
+    const payload = JSON.parse(result.output.trim())
+    assert.equal(payload.trackedCredentials, 0)
+    assert.equal(payload.trackedRepositories, 2)
+    assert.equal(payload.evidence.proofFiles, 0)
+    assert.deepStrictEqual(payload.credentials, [])
 
     runCli(['disable'], repoA, cliEnv)
     runCli(['disable'], repoB, cliEnv)

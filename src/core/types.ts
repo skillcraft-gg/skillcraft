@@ -38,6 +38,15 @@ export const ReposFileSchema = z.object({
   repos: z.array(RepoEntrySchema).default([]),
 })
 
+export const TrackedCredentialSchema = z.object({
+  id: z.string(),
+  trackedAt: z.string().optional(),
+})
+
+export const TrackedCredentialsFileSchema = z.object({
+  credentials: z.array(TrackedCredentialSchema).default([]),
+})
+
 export type Proof = {
   version: number
   commit: string
@@ -55,6 +64,8 @@ export type Proof = {
 
 export type RepoEntry = z.infer<typeof RepoEntrySchema>
 export type ReposFile = z.infer<typeof ReposFileSchema>
+export type TrackedCredentialEntry = z.infer<typeof TrackedCredentialSchema>
+export type TrackedCredentialsFile = z.infer<typeof TrackedCredentialsFileSchema>
 export type Config = z.infer<typeof ConfigSchema>
 export type PendingFile = z.infer<typeof PendingSchema>
 export type ContextFile = z.infer<typeof ContextSchema>
