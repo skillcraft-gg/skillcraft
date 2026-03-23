@@ -176,7 +176,8 @@ Example .skillcraft.json:
 
 Also installs:
 	•	git commit hook
-	•	agent plugin integration
+	•	managed Opencode plugin integration at `.opencode/plugins/skillcraft.mjs`
+	•	AI model provenance state at `.git/skillcraft/ai-model-context.json`
 	•	repo entry in ~/.skillcraft/repos.json
 
 ⸻
@@ -202,6 +203,13 @@ Example:
 skills. Loadout IDs remain local `owner/slug` only.
 
 The commit hook converts pending events into proof objects.
+
+When Opencode is enabled, the managed plugin captures runtime provenance and
+writes it to `.git/skillcraft/ai-model-context.json` so proof files include:
+
+- `agent.provider`
+- `model.provider`
+- `model.name`
 
 Proof objects are stored under:
 
@@ -235,6 +243,12 @@ Example:
 }
 
 Commit proofs include active loadouts.
+
+Proof documents may also include optional provenance fields:
+
+- `agent.provider`
+- `model.provider`
+- `model.name`
 
 Example proof:
 

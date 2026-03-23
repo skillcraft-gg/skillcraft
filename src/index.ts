@@ -50,7 +50,7 @@ reposCommand.command('prune').description('Remove unavailable repository entries
 
 program
   .command('progress')
-  .description('Show evidence progress for the current repository')
+  .description('Show evidence progress across tracked repositories')
   .action(withCommand(() => runProgress()))
 
 const skillsCommand = program.command('skills').description('Manage local skill publishing')
@@ -142,7 +142,7 @@ loadoutCommand
   .action((id) => withCommand(() => runLoadoutShare(id))())
 
 program
-  .command('_hook <name> [repoPath] [remote]')
+  .command('_hook <name> [repoPath] [remote]', { hidden: true })
   .description('internal hook command')
   .action((name, repoPath, remote) => withCommand(async () => {
     if (name === 'post-commit') {

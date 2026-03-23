@@ -54,6 +54,14 @@ export function pluginPath(repoPath: string): string {
   return path.join(localGitDir(repoPath), 'agent.json')
 }
 
+export function managedPluginPath(repoPath: string): string {
+  return path.join(repoPath, '.opencode', 'plugins', 'skillcraft.mjs')
+}
+
+export function aiModelContextPath(repoPath: string): string {
+  return path.join(localGitDir(repoPath), 'ai-model-context.json')
+}
+
 export async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath)

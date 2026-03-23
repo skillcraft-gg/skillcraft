@@ -59,6 +59,15 @@ function makeRepo(parentDir, name) {
   return repoDir
 }
 
+function addTrackedProof(repoDir, fileName, skills, env) {
+  const pendingPath = join(repoDir, '.git', 'skillcraft', 'pending.json')
+  writeFileSync(pendingPath, JSON.stringify({ skills: [...skills] }))
+  writeFileSync(join(repoDir, fileName), `proof evidence for ${fileName}\n`)
+  runGit(repoDir, ['add', fileName])
+  runGit(repoDir, ['commit', '-m', `add ${fileName}`])
+  runCli(['_hook', 'post-commit', repoDir], repoDir, env)
+}
+
 describe('Skillcraft CLI surface smoke tests', () => {
   const tempBase = makeTempDir('smoke')
   const home = join(tempBase, 'home')
@@ -88,6 +97,12 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assertOk(t, result, 'enabled skillcraft')
 
     assert.ok(existsSync(join(home, '.skillcraft', 'config.json')))
+    assert.ok(existsSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs')))
+
+    const aiContextFile = join(repo, '.git', 'skillcraft', 'ai-model-context.json')
+    assert.ok(existsSync(aiContextFile))
+    const aiContext = JSON.parse(readFileSync(aiContextFile, 'utf8'))
+    assert.equal(aiContext?.agent?.provider, 'opencode')
 
     result = runCli(['status'], repo, cliEnv)
     assertOk(t, result, 'skillcraft: enabled')
@@ -97,6 +112,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     result = runCli(['status'], repo, cliEnv)
     assertOk(t, result, 'skillcraft: disabled')
+
+    assert.ok(!existsSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs')))
+    assert.ok(!existsSync(aiContextFile))
   })
 
   test('repositories list and prune', (t) => {
@@ -356,6 +374,13 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const pending = join(repo, '.git', 'skillcraft', 'pending.json')
     writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
+    writeFileSync(
+      join(repo, '.git', 'skillcraft', 'ai-model-context.json'),
+      JSON.stringify({
+        agent: { provider: 'opencode' },
+        model: { provider: 'openai', name: 'gpt-4o' },
+      }),
+    )
     writeFileSync(join(repo, 'proof.txt'), 'change\n')
     runGit(repo, ['add', 'proof.txt'])
     runGit(repo, ['commit', '-m', 'add proof file'])
@@ -376,6 +401,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const proof = JSON.parse(proofJson)
     assert.equal(typeof proof.commit, 'string')
     assert.ok(proof.skills.some((entry) => entry.id === 'acme/alpha'))
+    assert.equal(proof.agent?.provider, 'opencode')
+    assert.equal(proof.model?.provider, 'openai')
+    assert.equal(proof.model?.name, 'gpt-4o')
 
     const oldPath = join(repo, '.git', 'refs', 'skillcraft', 'checkpoints', 'v1')
     assert.equal(existsSync(oldPath), false)
@@ -384,6 +412,28 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assertOk(t, result, `verify passed: 1 commit proofs resolved`)
 
     runCli(['disable'], repo, cliEnv)
+  })
+
+  test('progress aggregates across tracked repositories', (t) => {
+    const repoA = makeRepo(tempBase, 'progress-agg-a')
+    const repoB = makeRepo(tempBase, 'progress-agg-b')
+
+    let result = runCli(['enable'], repoA, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+    result = runCli(['enable'], repoB, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    addTrackedProof(repoA, 'proof-a.txt', ['acme/alpha'], cliEnv)
+    addTrackedProof(repoB, 'proof-b.txt', ['acme/beta'], cliEnv)
+
+    result = runCli(['progress'], tempBase, cliEnv)
+    assertOk(t, result, 'commits-with-proof: 2')
+    assertOk(t, result, 'proof files: 2')
+    assertOk(t, result, 'unique skills: 2')
+    assertOk(t, result, 'skills: acme/alpha, acme/beta')
+
+    runCli(['disable'], repoA, cliEnv)
+    runCli(['disable'], repoB, cliEnv)
   })
 
   test('verify reads proofs from remote branch', (t) => {

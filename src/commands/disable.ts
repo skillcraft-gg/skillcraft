@@ -1,5 +1,13 @@
 import { isGitRepo, gitRoot } from '@/core/git'
-import { localGitDir, localSkillcraftConfig, pendingPath, contextPath, pluginPath } from '@/core/paths'
+import {
+  localGitDir,
+  localSkillcraftConfig,
+  pendingPath,
+  contextPath,
+  pluginPath,
+  managedPluginPath,
+  aiModelContextPath,
+} from '@/core/paths'
 import { removePostCommitHook } from '@/core/hooks'
 import { removeFile } from '@/core/fs'
 import { removeRepo } from '@/core/config'
@@ -16,6 +24,8 @@ export async function runDisable(): Promise<void> {
     removeFile(pendingPath(root)),
     removeFile(contextPath(root)),
     removeFile(pluginPath(root)),
+    removeFile(managedPluginPath(root)),
+    removeFile(aiModelContextPath(root)),
     removeFile(localGitDir(root)),
   ])
   await removePostCommitHook(root)

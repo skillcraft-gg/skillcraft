@@ -3,7 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs/promises'
 import { ensureDir, readJson, writeJson } from './fs.js'
-import { pendingPath, contextPath } from './paths.js'
+import { pendingPath, contextPath, aiModelContextPath } from './paths.js'
 import { DefaultProofRef, PendingSchema, ContextSchema, type Proof } from './types.js'
 import { git, gitCommitMessage, gitHasRef, gitLsTreeNames, gitRemote, gitShowText } from './git.js'
 import { isValidSkillIdentifier, splitSkillIdentifier } from './validation.js'
@@ -192,6 +192,41 @@ export async function loadContext(repoPath: string): Promise<string[]> {
   return parsed.success ? parsed.data.activeLoadouts : []
 }
 
+export async function loadAiModelContext(repoPath: string): Promise<{ agent?: { provider?: string }; model?: { provider?: string; name?: string } }> {
+  const raw = await readJson<unknown>(aiModelContextPath(repoPath))
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {}
+  }
+
+  const record = raw as Record<string, unknown>
+  const agentValue = record.agent && typeof record.agent === 'object' && !Array.isArray(record.agent)
+    ? (record.agent as Record<string, unknown>)
+    : undefined
+
+  const modelValue = record.model && typeof record.model === 'object' && !Array.isArray(record.model)
+    ? (record.model as Record<string, unknown>)
+    : undefined
+
+  return {
+    agent: typeof agentValue?.provider === 'string' ? { provider: normalizeLowerCase(agentValue.provider) } : undefined,
+    model:
+      typeof modelValue?.provider === 'string' || typeof modelValue?.name === 'string'
+        ? {
+            provider: typeof modelValue.provider === 'string' ? normalizeLowerCase(modelValue.provider) : undefined,
+            name: typeof modelValue.name === 'string' ? normalizeModelName(modelValue.name) : undefined,
+          }
+        : undefined,
+  }
+}
+
+function normalizeLowerCase(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function normalizeModelName(value: string): string {
+  return value.trim()
+}
+
 export function parseProof(payload: unknown): Proof | undefined {
   if (!payload || typeof payload !== 'object') {
     return undefined
@@ -221,6 +256,41 @@ export function parseProof(payload: unknown): Proof | undefined {
     skills,
     loadouts,
     timestamp: record.timestamp,
+    agent: parseAgentValue(record.agent),
+    model: parseModelValue(record.model),
+  }
+}
+
+function parseAgentValue(value: unknown): { provider?: string } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const provider = (value as Record<string, unknown>).provider
+  if (typeof provider !== 'string') {
+    return undefined
+  }
+
+  const normalized = provider.trim().toLowerCase()
+  return normalized ? { provider: normalized } : undefined
+}
+
+function parseModelValue(value: unknown): { provider?: string; name?: string } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const raw = value as Record<string, unknown>
+  const normalizedProvider = typeof raw.provider === 'string' ? raw.provider.trim().toLowerCase() : undefined
+  const normalizedName = typeof raw.name === 'string' ? raw.name.trim() : undefined
+
+  if (!normalizedProvider && !normalizedName) {
+    return undefined
+  }
+
+  return {
+    provider: normalizedProvider,
+    name: normalizedName,
   }
 }
 
@@ -320,6 +390,7 @@ export async function buildProofFromPending(
     return undefined
   }
   const loadouts = await loadContext(repoPath)
+  const aiModelContext = await loadAiModelContext(repoPath)
 
   const proof: Proof = {
     version: 1,
@@ -329,6 +400,7 @@ export async function buildProofFromPending(
       .filter((entry): entry is { id: string; version?: string } => !!entry),
     loadouts,
     timestamp,
+    ...aiModelContext,
   }
 
   const proofId = await writeProof(repoPath, proof)

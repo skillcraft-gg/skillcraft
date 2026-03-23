@@ -12,6 +12,15 @@ export const ContextSchema = z.object({
   activeLoadouts: z.array(z.string()).default([]),
 })
 
+export const ProofAgentSchema = z.object({
+  provider: z.string().optional(),
+})
+
+export const ProofModelSchema = z.object({
+  provider: z.string().optional(),
+  name: z.string().optional(),
+})
+
 export const ConfigSchema = z.object({
   githubUser: z.string().optional(),
   provider: z.enum(['gh']).default('gh'),
@@ -35,6 +44,13 @@ export type Proof = {
   skills: Array<{ id: string; version?: string }>
   loadouts: string[]
   timestamp: string
+  agent?: {
+    provider?: string
+  }
+  model?: {
+    provider?: string
+    name?: string
+  }
 }
 
 export type RepoEntry = z.infer<typeof RepoEntrySchema>
