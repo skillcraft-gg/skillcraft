@@ -30,7 +30,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
@@ -47,9 +47,7 @@ jobs:
         run: npm test
 
       - name: Publish to npm
-        env:
-          NPM_CONFIG_PROVENANCE: true
-        run: npm publish --access public --provenance
+        run: npm publish --access public
 
       - name: Commit version bump
         run: |
