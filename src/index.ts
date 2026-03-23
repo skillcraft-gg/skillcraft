@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander'
+import packageJson from '../package.json'
 import { runDisable } from './commands/disable.js'
 import { runDoctor, runStatus } from './commands/status.js'
 import { runEnable } from './commands/enable.js'
@@ -21,7 +22,7 @@ import { runHookPush } from './commands/internalHook.js'
 
 const program = new Command()
 
-program.name('skillcraft').description('Skillcraft CLI').version('0.1.0')
+program.name('skillcraft').description('Skillcraft CLI').version(packageJson.version)
 program.option('--json', 'machine-readable JSON output')
 
 program
