@@ -74,7 +74,7 @@ export async function runSkillsPublish(slug: string): Promise<void> {
   const provider = getProvider(config.provider ?? 'gh')
   await provider.getUser()
 
-  const destination = 'skillcraft-gg/skills'
+  const destination = 'skillcraft-gg/skills-registry'
   const branch = `skillcraft-skill-${owner}-${slugPart}`
   const temp = path.join(process.cwd(), '.skillcraft-temp-skill-publish')
 
@@ -530,7 +530,7 @@ async function loadSearchIndex(): Promise<Set<string>> {
 
 async function loadSearchIndexEntries(outputMode: SearchIndexOptions['outputMode'] = undefined): Promise<SearchIndexEntry[]> {
   const explicitPath = process.env.SKILLCRAFT_SEARCH_INDEX_PATH?.trim()
-  const source = explicitPath || process.env.SKILLCRAFT_SEARCH_INDEX_URL || 'https://skillcraft.gg/skills/search/index.json'
+  const source = explicitPath || process.env.SKILLCRAFT_SEARCH_INDEX_URL || 'https://skillcraft.gg/skills-registry/search/index.json'
   const loadEntries = async () => {
     if (explicitPath) {
       const raw = await fs.readFile(explicitPath, 'utf8')
@@ -538,7 +538,7 @@ async function loadSearchIndexEntries(outputMode: SearchIndexOptions['outputMode
       return normalizeSearchIndexEntries(isJson(parsed) ? parsed : [])
     }
 
-    const url = process.env.SKILLCRAFT_SEARCH_INDEX_URL || 'https://skillcraft.gg/skills/search/index.json'
+    const url = process.env.SKILLCRAFT_SEARCH_INDEX_URL || 'https://skillcraft.gg/skills-registry/search/index.json'
     const response = await fetch(url, {
       headers: {
         'user-agent': 'skillcraft-cli',

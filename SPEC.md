@@ -45,7 +45,7 @@ Responsibilities include:
 
 The CLI interacts with these repositories:
 
-skillcraft-gg/skills
+skillcraft-gg/skills-registry
 skillcraft-gg/loadouts
 skillcraft-gg/credentials
 
@@ -90,7 +90,7 @@ Skills:
 
 `skills add` supports both local and external identifiers:
 
-- `owner/slug` for skills in `skillcraft-gg/skills`
+- `owner/slug` for skills in `skillcraft-gg/skills-registry`
 - `source:slug` or `source:owner/slug` for external registries
 
 Loadouts:
@@ -276,7 +276,7 @@ skillcraft skills publish <owner>/<slug>
 
 Publishing workflow:
 	1.	validate local skill directory
-	2.	clone or fork skillcraft-gg/skills
+	2.	clone or fork skillcraft-gg/skills-registry
 	3.	copy skill files into registry structure
 	4.	commit changes
 	5.	create pull request using GitHub CLI
@@ -390,7 +390,7 @@ Route ownership:
 
 / and /docs are sourced directly from `skillcraft`.
 /skills, /loadouts, and /credentials are generated from their registry sources
-(`skillcraft-gg/skills`, `skillcraft-gg/loadouts`, `skillcraft-gg/credentials`)
+(`skillcraft-gg/skills-registry`, `skillcraft-gg/loadouts`, `skillcraft-gg/credentials`)
 when those registries change.
 
 The site must:
