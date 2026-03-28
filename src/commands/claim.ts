@@ -10,7 +10,7 @@ import { gitRemote } from '@/core/git'
 export async function runClaimList(): Promise<void> {
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
-  const issues = await provider.listClaimIssues('skillcraft-gg/credentials')
+  const issues = await provider.listClaimIssues('skillcraft-gg/credential-ledger')
   if (!issues.length) {
     process.stdout.write('no claim issues found\n')
     return
@@ -27,7 +27,7 @@ export async function runClaimStatus(reference: string): Promise<void> {
   }
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
-  const status = await provider.getIssueStatus('skillcraft-gg/credentials', issue)
+  const status = await provider.getIssueStatus('skillcraft-gg/credential-ledger', issue)
   process.stdout.write(`issue #${issue}\n`)
   process.stdout.write(`state: ${status.state}\n`)
   process.stdout.write(`labels: ${status.labels.join(', ') || 'none'}\n`)
@@ -42,7 +42,7 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
   const yamlPayload = yaml.stringify(payload)
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
-  const issue = await provider.createIssue('skillcraft-gg/credentials', `claim: ${credential}`, yamlPayload)
+  const issue = await provider.createIssue('skillcraft-gg/credential-ledger', `claim: ${credential}`, yamlPayload)
   process.stdout.write(`opened claim: #${issue}\n`)
   process.stdout.write(`payload:\n${yamlPayload}\n`)
 }

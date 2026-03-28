@@ -47,7 +47,7 @@ The CLI interacts with these repositories:
 
 skillcraft-gg/skills-registry
 skillcraft-gg/loadouts
-skillcraft-gg/credentials
+skillcraft-gg/credential-ledger
 
 ---
 
@@ -354,7 +354,7 @@ The CLI:
 	2.	constructs a claim payload
 	3.	opens a GitHub issue in:
 
-skillcraft-gg/credentials
+skillcraft-gg/credential-ledger
 
 GitHub Actions verify the claim and issue credentials.
 
@@ -390,7 +390,7 @@ Route ownership:
 
 / and /docs are sourced directly from `skillcraft`.
 /skills, /loadouts, and /credentials are generated from their registry sources
-(`skillcraft-gg/skills-registry`, `skillcraft-gg/loadouts`, `skillcraft-gg/credentials`)
+(`skillcraft-gg/skills-registry`, `skillcraft-gg/loadouts`, `skillcraft-gg/credential-ledger`)
 when those registries change.
 
 The site must:

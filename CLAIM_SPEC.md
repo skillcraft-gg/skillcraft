@@ -14,7 +14,7 @@ skillcraft claim
 
 CLI creates a claim issue in:
 
-skillcraft-gg/credentials
+skillcraft-gg/credential-ledger
 
 GitHub Actions verifies the evidence.
 

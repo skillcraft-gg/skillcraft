@@ -46,7 +46,7 @@ export type CredentialRequirementResult = {
 
 type RawRequirementNode = Record<string, unknown>
 
-const DEFAULT_CREDENTIAL_INDEX_URL = 'https://skillcraft.gg/credentials/credentials/index.json'
+const DEFAULT_CREDENTIAL_INDEX_URL = 'https://skillcraft.gg/credential-ledger/credentials/index.json'
 const CREDENTIAL_INDEX_CACHE_REFRESH_MS = 6 * 60 * 60 * 1000
 const CREDENTIAL_INDEX_CACHE_VERSION = 1
 

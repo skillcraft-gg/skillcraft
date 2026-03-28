@@ -453,7 +453,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const repo = makeRepo(tempBase, 'progress-cache-refresh')
     const credentialCachePath = join(home, '.skillcraft', 'cache', 'credentials', 'index.json')
 
-    const remoteUrl = 'https://skillcraft.gg/credentials/credentials/index.json'
+    const remoteUrl = 'https://skillcraft.gg/credential-ledger/credentials/index.json'
     const remoteCredentialEnv = {
       ...cliEnv,
       SKILLCRAFT_CREDENTIAL_INDEX_URL: remoteUrl,
