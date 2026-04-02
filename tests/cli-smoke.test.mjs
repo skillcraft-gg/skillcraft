@@ -129,8 +129,16 @@ function makeFakeGhScript(binDir) {
       '  echo "https://github.com/skillcraft-gg/credential-ledger/issues/4711"',
       '  exit 0',
       'fi',
+      'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
+      "  echo '{\"state\":\"open\",\"labels\":[{\"name\":\"skillcraft-claim\"},{\"name\":\"skillcraft-processing\"}],\"url\":\"https://github.com/skillcraft-gg/credential-ledger/issues/4711\"}'",
+      '  exit 0',
+      'fi',
+    'if [ "$1" = "run" ] && [ "$2" = "list" ]; then',
+    "  echo '[{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"success\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1001\",\"createdAt\":\"2026-04-01T00:00:00Z\",\"workflowName\":\"Process credential claims\"},{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"failure\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1000\",\"createdAt\":\"2026-03-31T23:00:00Z\",\"workflowName\":\"Process credential claims\"}]'",
+    '  exit 0',
+    'fi',
       'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then',
-      '  echo "{\"user\": {\"login\": \"test-user\"}}"',
+      "  echo '{\"user\": {\"login\": \"test-user\"}}'",
       '  exit 0',
       'fi',
       'echo "unsupported mock gh command: $@" >&2',
@@ -532,6 +540,23 @@ describe('Skillcraft CLI surface smoke tests', () => {
     )
 
     runCli(['disable'], repo, cliEnv)
+  })
+
+  test('claim status checks processing action runs', (t) => {
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-status')
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const statusEnv = {
+      ...cliEnv,
+      PATH: `${dirname(fakeGh)}:${cliEnv.PATH || process.env.PATH || ''}`,
+    }
+
+    const result = runCli(['claim', 'status', '4711'], plain, statusEnv)
+    assertOk(t, result, 'issue #4711')
+    assertOk(t, result, 'state: open')
+    assertOk(t, result, 'labels: skillcraft-claim, skillcraft-processing')
+    assertOk(t, result, 'processing actions: completed (success)')
+    assertOk(t, result, 'latest run: https://github.com/skillcraft-gg/credential-ledger/actions/runs/1001')
+    assertOk(t, result, 'previous attempts: 1')
   })
 
   test('progress help documents --refresh', (t) => {

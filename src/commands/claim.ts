@@ -29,10 +29,24 @@ export async function runClaimStatus(reference: string): Promise<void> {
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
   const status = await provider.getIssueStatus('skillcraft-gg/credential-ledger', issue)
+  const runs = await provider.listClaimProcessingRuns('skillcraft-gg/credential-ledger', issue)
   process.stdout.write(`issue #${issue}\n`)
   process.stdout.write(`state: ${status.state}\n`)
   process.stdout.write(`labels: ${status.labels.join(', ') || 'none'}\n`)
   process.stdout.write(`url: ${status.url}\n`)
+
+  if (!runs.length) {
+    process.stdout.write('processing actions: none found\n')
+    return
+  }
+
+  const latest = runs[0]
+  const conclusion = latest.conclusion ? ` (${latest.conclusion})` : ''
+  process.stdout.write(`processing actions: ${latest.status}${conclusion}\n`)
+  process.stdout.write(`latest run: ${latest.url}\n`)
+  if (runs.length > 1) {
+    process.stdout.write(`previous attempts: ${runs.length - 1}\n`)
+  }
 }
 
 export async function runClaim(credential: string, opts: { allRepos?: boolean; repo?: string[] }): Promise<void> {

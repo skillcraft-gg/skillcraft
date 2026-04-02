@@ -34,6 +34,16 @@ export interface ForgeProvider {
     body: string,
   ): Promise<number>
   getIssueStatus(repo: string, issueNumber: number): Promise<{ state: string; labels: string[]; url: string }>
+  listClaimProcessingRuns(repo: string, issueNumber: number): Promise<
+    Array<{
+      status: string
+      conclusion?: string | null
+      url: string
+      name?: string
+      createdAt?: string
+      workflowName?: string
+    }>
+  >
   listClaimIssues(repo: string): Promise<Array<{ number: number; title: string; state: string }>>
   cloneRepo(fullName: string, destination: string): Promise<void>
   copyDirectory(source: string, destination: string): Promise<void>
@@ -174,6 +184,61 @@ export class GitHubProvider implements ForgeProvider {
       labels: parsed.labels?.map((label) => label.name) ?? [],
       url: parsed.url,
     }
+  }
+
+  async listClaimProcessingRuns(repo: string, issueNumber: number): Promise<
+    Array<{
+      status: string
+      conclusion?: string | null
+      url: string
+      name?: string
+      createdAt?: string
+      workflowName?: string
+    }>
+  > {
+    const raw = await runGh([
+      'run',
+      'list',
+      '--repo',
+      repo,
+      '--workflow',
+      'Process credential claims',
+      '--json',
+      'name,status,conclusion,url,createdAt,workflowName',
+    ])
+    const parsed = JSON.parse(raw) as Array<{
+      status?: string
+      conclusion?: string | null
+      url?: string
+      name?: string
+      createdAt?: string
+      workflowName?: string
+    }>
+    const issueMarker = `#${issueNumber}`
+
+    const candidates = parsed.filter((entry) => {
+      const name = entry.name || ''
+      const workflowName = entry.workflowName || ''
+      return name.includes(issueMarker) || workflowName.includes(issueMarker)
+    })
+
+    const runs = candidates.length > 0
+      ? candidates
+      : parsed.filter((entry) => entry.status && ['in_progress', 'queued', 'waiting', 'action_required', 'canceling'].includes(entry.status))
+    if (!runs.length) {
+      return []
+    }
+
+    return runs
+      .filter((entry) => entry.url)
+      .map((entry) => ({
+        status: entry.status || 'unknown',
+        conclusion: entry.conclusion ?? undefined,
+        url: entry.url!,
+        name: entry.name,
+        createdAt: entry.createdAt,
+        workflowName: entry.workflowName,
+      }))
   }
 
   async listClaimIssues(repo: string): Promise<Array<{ number: number; title: string; state: string }>> {

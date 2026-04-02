@@ -72,7 +72,7 @@ Evidence & progress:
 Claims:
   claim <credential>    Submit a credential claim
   claim list            Show claimable credentials
-  claim status          Show status of submitted claims
+  claim status <issue>   Show claim issue and processing action status
 
 Skills:
     skills add <id>       Install a skill from the registry
