@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
 import yaml from 'yaml'
+import os from 'node:os'
+import path from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { loadRepos } from '@/core/config'
 import { hasSkillcraftDir } from '@/core/state'
 import { loadProofFromRepo } from '@/core/progress'
 import { getProvider } from '@/providers'
 import { loadGlobalConfig } from '@/core/config'
-import { gitRemote } from '@/core/git'
+import { git, gitRemote } from '@/core/git'
 
 export async function runClaimList(): Promise<void> {
   const config = await loadGlobalConfig()
@@ -39,6 +42,17 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
     allRepos: opts?.allRepos,
     repo: opts?.repo,
   })
+
+  const unpushed = await findUnpushedCommits(payload.sources)
+  if (unpushed.length > 0) {
+    process.stdout.write('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.\n')
+    for (const entry of unpushed) {
+      process.stdout.write(`- ${entry.commit} in ${entry.repo}\n`)
+    }
+    process.exitCode = 1
+    return
+  }
+
   const yamlPayload = yaml.stringify(payload)
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
@@ -98,4 +112,87 @@ async function resolveClaimRepos(options: { allRepos?: boolean; repo?: string[] 
     valid.push(repoPath)
   }
   return valid
+}
+
+type UnpushedCommit = {
+  repo: string
+  commit: string
+}
+
+async function findUnpushedCommits(sources: Array<{ repo: string; commits: string[] }>): Promise<UnpushedCommit[]> {
+  const unpushed: UnpushedCommit[] = []
+
+  for (const source of sources) {
+    const remote = normalizeRemoteSource(source.repo)
+    if (!remote) {
+      for (const commit of source.commits) {
+        unpushed.push({ repo: source.repo, commit })
+      }
+      continue
+    }
+
+    const commitList = Array.from(new Set(source.commits.map((commit) => commit.trim()).filter(Boolean)))
+    if (!commitList.length) {
+      continue
+    }
+
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'skillcraft-claim-check-'))
+    try {
+      try {
+        await git(['clone', '--quiet', '--no-checkout', remote, tempDir])
+      } catch {
+        for (const commit of commitList) {
+          unpushed.push({ repo: remote, commit })
+        }
+        continue
+      }
+
+      for (const commit of commitList) {
+        const isPushed = await isCommitOnRemote(tempDir, commit)
+        if (!isPushed) {
+          unpushed.push({ repo: remote, commit })
+        }
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  }
+
+  return unpushed
+}
+
+async function isCommitOnRemote(repoDir: string, commit: string): Promise<boolean> {
+  try {
+    await git(['cat-file', '-e', `${commit}^{commit}`], repoDir)
+  } catch {
+    return false
+  }
+
+  try {
+    const output = await git(['branch', '-r', '--contains', commit], repoDir)
+    return !!output
+  } catch {
+    return false
+  }
+}
+
+function normalizeRemoteSource(rawRepo: string): string | undefined {
+  const repo = rawRepo.trim()
+  if (!repo) {
+    return undefined
+  }
+
+  if (/^[a-zA-Z]:[\\/]/.test(repo) || repo.startsWith('/') || repo.startsWith('./') || repo.startsWith('../')) {
+    return undefined
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:/.test(repo)) {
+    return repo
+  }
+
+  if (repo.startsWith('git@') || repo.startsWith('ssh://') || repo.startsWith('http://') || repo.startsWith('https://')) {
+    return repo
+  }
+
+  return undefined
 }

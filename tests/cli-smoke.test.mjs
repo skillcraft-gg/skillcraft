@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import process from 'node:process'
@@ -116,6 +116,29 @@ function addTrackedProof(repoDir, fileName, skills, env) {
   runGit(repoDir, ['add', fileName], hookDisabledEnv)
   runGit(repoDir, ['commit', '-m', `add ${fileName}`], hookDisabledEnv)
   runCli(['_hook', 'post-commit', repoDir], repoDir, env)
+}
+
+function makeFakeGhScript(binDir) {
+  const fake = join(binDir, 'gh')
+  mkdirSync(binDir, { recursive: true })
+  writeFileSync(
+    fake,
+    [
+      '#!/usr/bin/env sh',
+      'if [ "$1" = "issue" ] && [ "$2" = "create" ]; then',
+      '  echo "https://github.com/skillcraft-gg/credential-ledger/issues/4711"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then',
+      '  echo "{\"user\": {\"login\": \"test-user\"}}"',
+      '  exit 0',
+      'fi',
+      'echo "unsupported mock gh command: $@" >&2',
+      'exit 1',
+    ].join('\n'),
+  )
+  chmodSync(fake, 0o755)
+  return fake
 }
 
 describe('Skillcraft CLI surface smoke tests', () => {
@@ -427,6 +450,86 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     result = runCli(['_hook', 'post-commit', repo], repo, cliEnv)
     assert.equal(result.code, 0)
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('claim fails when source commits are not pushed', (t) => {
+    const repo = makeRepo(tempBase, 'claim-unpushed')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const result = runCli(['enable'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], credentialCliEnv)
+
+    const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, credentialCliEnv)
+    assert.equal(claimResult.code, 1)
+    assert.equal(claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'), true)
+    assert.equal(claimResult.output.includes('opened claim:'), false)
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('claim succeeds when source commits are pushed', (t) => {
+    const repo = makeRepo(tempBase, 'claim-pushed')
+    const remote = join(tempBase, 'claim-pushed-origin.git')
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-success')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const claimEnv = {
+      ...credentialCliEnv,
+      PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+    }
+
+    let result = runCli(['enable'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+
+    addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], claimEnv)
+    runGit(repo, ['push', 'origin', 'HEAD'])
+
+    const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, claimEnv)
+    assert.equal(claimResult.code, 0)
+    assert.equal(claimResult.output.includes('opened claim: #4711'), true)
+    assert.equal(
+      claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'),
+      false,
+    )
 
     runCli(['disable'], repo, cliEnv)
   })
