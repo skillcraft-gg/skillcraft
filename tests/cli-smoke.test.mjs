@@ -16,11 +16,12 @@ if (!existsSync(cli)) {
   throw new Error('Built CLI not found. Run `npm run build` before `npm test`.')
 }
 
-function runGit(cwd, args) {
+function runGit(cwd, args, env = process.env) {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
     stdio: 'pipe',
+    env,
   }).trim()
 }
 
@@ -111,8 +112,9 @@ function addTrackedProof(repoDir, fileName, skills, env) {
   const pendingPath = join(repoDir, '.git', 'skillcraft', 'pending.json')
   writeFileSync(pendingPath, JSON.stringify({ skills: [...skills] }))
   writeFileSync(join(repoDir, fileName), `proof evidence for ${fileName}\n`)
-  runGit(repoDir, ['add', fileName])
-  runGit(repoDir, ['commit', '-m', `add ${fileName}`])
+  const hookDisabledEnv = { ...env, SKILLCRAFT_HOOK_DISABLED: '1' }
+  runGit(repoDir, ['add', fileName], hookDisabledEnv)
+  runGit(repoDir, ['commit', '-m', `add ${fileName}`], hookDisabledEnv)
   runCli(['_hook', 'post-commit', repoDir], repoDir, env)
 }
 
@@ -165,6 +167,28 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     assert.ok(!existsSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs')))
     assert.ok(!existsSync(aiContextFile))
+  })
+
+  test('post-commit hook resolves repo root from subdirectory', (t) => {
+    const repo = makeRepo(tempBase, 'hook-root')
+    try {
+      const result = runCli(['enable'], repo, cliEnv)
+      assertOk(t, result, 'enabled skillcraft')
+
+      const postCommitHook = readFileSync(join(repo, '.git', 'hooks', 'post-commit'), 'utf8')
+      assert.ok(postCommitHook.includes('SKILLCRAFT_HOOK_DIR="$(git -C "$SKILLCRAFT_HOOK_DIR" rev-parse --show-toplevel'))
+
+      const nested = join(repo, 'nested')
+      mkdirSync(nested)
+      writeFileSync(join(nested, 'nested.txt'), 'nested file\n')
+      runGit(nested, ['add', 'nested.txt'])
+      runGit(nested, ['commit', '-m', 'commit from nested directory'])
+
+      const message = runGit(repo, ['log', '-n', '1', '--pretty=%B'])
+      assert.ok(message.includes('Skillcraft-Ref:'), 'hook should append Skillcraft-Ref when run from subdirectory')
+    } finally {
+      runCli(['disable'], repo, cliEnv)
+    }
   })
 
   test('repositories list and prune', (t) => {
@@ -653,7 +677,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     )
     writeFileSync(join(repo, 'proof.txt'), 'change\n')
     runGit(repo, ['add', 'proof.txt'])
-    runGit(repo, ['commit', '-m', 'add proof file'])
+    runGit(repo, ['commit', '-m', 'add proof file'], { ...cliEnv, SKILLCRAFT_HOOK_DISABLED: '1' })
 
     const hookResult = runCli(['_hook', 'post-commit', repo], repo, cliEnv)
     assertOk(t, hookResult, '')
@@ -747,7 +771,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
     writeFileSync(join(sourceRepo, 'proof.txt'), 'change\n')
     runGit(sourceRepo, ['add', 'proof.txt'])
-    runGit(sourceRepo, ['commit', '-m', 'add proof file'])
+    runGit(sourceRepo, ['commit', '-m', 'add proof file'], { ...cliEnv, SKILLCRAFT_HOOK_DISABLED: '1' })
 
     assert.equal(existsSync(join(sourceRepo, '.git', 'hooks', 'post-commit')), true)
     assert.equal(existsSync(join(sourceRepo, '.git', 'hooks', 'pre-push')), true)
