@@ -11,23 +11,44 @@ import { findUnpushedCommits } from '@/core/remote'
 export async function runClaimList(): Promise<void> {
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
+  const claimant = await resolveClaimant(provider)
   const issues = await provider.listClaimIssues('skillcraft-gg/credential-ledger')
-  if (!issues.length) {
-    process.stdout.write('no claim issues found\n')
+
+  const matching = issues.filter((issue) => {
+    const parsed = parseClaimMetadataFromBody(issue.body)
+    return (
+      parsed?.claimant === normalizeText(claimant) &&
+      !!parsed?.credential
+    )
+  })
+
+  if (!matching.length) {
+    process.stdout.write(`no claim issues found for ${claimant || 'user'}\n`)
     return
   }
-  for (const issue of issues) {
+
+  for (const issue of matching) {
     process.stdout.write(`#${issue.number} ${issue.title} (${issue.state})\n`)
   }
+
+  return
 }
 
 export async function runClaimStatus(reference: string): Promise<void> {
-  const issue = Number(reference)
-  if (!issue) {
-    throw new Error('claim status requires issue number')
+  const credential = normalizeText(reference)
+  if (!credential) {
+    throw new Error('claim status requires a credential identifier')
   }
+
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
+  const claimant = await resolveClaimant(provider)
+
+  const issue = await findClaimIssue(provider, credential, claimant)
+  if (!issue) {
+    throw new Error(`No claim found for credential ${credential} for user ${claimant || 'unknown'}. Run "skillcraft claim" to see your claim issues.`)
+  }
+
   const status = await provider.getIssueStatus('skillcraft-gg/credential-ledger', issue)
   const runs = await provider.listClaimProcessingRuns('skillcraft-gg/credential-ledger', issue)
   process.stdout.write(`issue #${issue}\n`)
@@ -47,6 +68,25 @@ export async function runClaimStatus(reference: string): Promise<void> {
   if (runs.length > 1) {
     process.stdout.write(`previous attempts: ${runs.length - 1}\n`)
   }
+}
+
+async function findClaimIssue(provider: ReturnType<typeof getProvider>, credential: string, claimant: string): Promise<number | undefined> {
+  const issues = await provider.listClaimIssues('skillcraft-gg/credential-ledger')
+  const normalizedCredential = normalizeText(credential)
+  const normalizedClaimant = normalizeText(claimant)
+
+  const matches = issues
+    .map((issue) => {
+      const parsed = parseClaimMetadataFromBody(issue.body)
+      if (!parsed || parsed.claimant !== normalizedClaimant || parsed.credential !== normalizedCredential) {
+        return undefined
+      }
+
+      return issue.number
+    })
+    .filter((value): value is number => !!value)
+
+  return matches.sort((a, b) => b - a)[0]
 }
 
 export async function runClaim(credential: string, opts: { allRepos?: boolean; repo?: string[] }): Promise<void> {

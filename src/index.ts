@@ -135,9 +135,9 @@ claimCommand
   .action(withCommand(runClaimList))
 
 claimCommand
-  .command('status <issue>')
-  .description('Show claim issue status')
-  .action((issue) => withCommand(() => runClaimStatus(issue))())
+  .command('status <credential>')
+  .description('Show claim status by credential identifier')
+  .action((credential) => withCommand(() => runClaimStatus(credential))())
 
 const loadoutCommand = program.command('loadout').description('Manage active loadouts')
 loadoutCommand
