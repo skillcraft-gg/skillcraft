@@ -37,6 +37,10 @@ export function normalizeRemoteSource(rawRepo: string): string | undefined {
     return repo
   }
 
+  if (repo.startsWith('file://')) {
+    return repo
+  }
+
   return undefined
 }
 
@@ -112,7 +116,7 @@ export async function findMissingCommitsInRemote(remoteUrl: string, commits: str
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'skillcraft-remote-check-'))
   try {
     try {
-      await git(['clone', '--quiet', '--no-checkout', remoteUrl, tempDir])
+      await git(['clone', '--quiet', '--no-checkout', remoteUrl, tempDir], process.cwd())
     } catch {
       return commitList
     }

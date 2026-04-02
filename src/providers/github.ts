@@ -44,7 +44,16 @@ export interface ForgeProvider {
       workflowName?: string
     }>
   >
-  listClaimIssues(repo: string): Promise<Array<{ number: number; title: string; state: string }>>
+  listClaimIssues(repo: string): Promise<
+    Array<{
+      number: number
+      title: string
+      state: string
+      body?: string
+      url?: string
+      labels?: Array<{ name: string }>
+    }>
+  >
   cloneRepo(fullName: string, destination: string): Promise<void>
   copyDirectory(source: string, destination: string): Promise<void>
 }
@@ -241,7 +250,16 @@ export class GitHubProvider implements ForgeProvider {
       }))
   }
 
-  async listClaimIssues(repo: string): Promise<Array<{ number: number; title: string; state: string }>> {
+  async listClaimIssues(repo: string): Promise<
+    Array<{
+      number: number
+      title: string
+      state: string
+      body?: string
+      url?: string
+      labels?: Array<{ name: string }>
+    }>
+  > {
     const raw = await runGh([
       'issue',
       'list',
@@ -252,11 +270,18 @@ export class GitHubProvider implements ForgeProvider {
       '--state',
       'all',
       '--json',
-      'number,title,state',
+      'number,title,state,body,labels,url',
       '--limit',
       '50',
     ])
-    const parsed = JSON.parse(raw) as Array<{ number: number; title: string; state: string }>
+    const parsed = JSON.parse(raw) as Array<{
+      number: number
+      title: string
+      state: string
+      body?: string
+      labels?: Array<{ name: string }>
+      url?: string
+    }>
     return parsed
   }
 

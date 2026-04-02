@@ -133,10 +133,14 @@ function makeFakeGhScript(binDir) {
       "  echo '{\"state\":\"open\",\"labels\":[{\"name\":\"skillcraft-claim\"},{\"name\":\"skillcraft-processing\"}],\"url\":\"https://github.com/skillcraft-gg/credential-ledger/issues/4711\"}'",
       '  exit 0',
       'fi',
-    'if [ "$1" = "run" ] && [ "$2" = "list" ]; then',
-    "  echo '[{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"success\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1001\",\"createdAt\":\"2026-04-01T00:00:00Z\",\"workflowName\":\"Process credential claims\"},{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"failure\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1000\",\"createdAt\":\"2026-03-31T23:00:00Z\",\"workflowName\":\"Process credential claims\"}]'",
-    '  exit 0',
-    'fi',
+      'if [ "$1" = "issue" ] && [ "$2" = "list" ]; then',
+      '  printf "%s" "${SKILLCRAFT_FAKE_GH_ISSUE_LIST_JSON:-[]}"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "run" ] && [ "$2" = "list" ]; then',
+      "  echo '[{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"success\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1001\",\"createdAt\":\"2026-04-01T00:00:00Z\",\"workflowName\":\"Process credential claims\"},{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"failure\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1000\",\"createdAt\":\"2026-03-31T23:00:00Z\",\"workflowName\":\"Process credential claims\"}]'",
+      '  exit 0',
+      'fi',
       'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then',
       "  echo '{\"user\": {\"login\": \"test-user\"}}'",
       '  exit 0',
@@ -538,6 +542,64 @@ describe('Skillcraft CLI surface smoke tests', () => {
       claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'),
       false,
     )
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('claim blocks already issued credential for current user', (t) => {
+    const repo = makeRepo(tempBase, 'claim-duplicate')
+    const remote = join(tempBase, 'claim-duplicate-origin.git')
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-duplicate')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const issuedIssue = JSON.stringify([
+      {
+        number: 4700,
+        title: 'claim: skillcraft-gg/hello-world',
+        state: 'closed',
+        body: 'claim_version: 1\nclaimant:\n  github: test-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
+        url: 'https://github.com/skillcraft-gg/credential-ledger/issues/4700',
+        labels: [{ name: 'skillcraft-claim' }, { name: 'skillcraft-issued' }],
+      },
+    ])
+
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const claimEnv = {
+      ...credentialCliEnv,
+      PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_ISSUE_LIST_JSON: issuedIssue,
+    }
+
+    let result = runCli(['enable'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+
+    addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], claimEnv)
+    runGit(repo, ['push', 'origin', 'HEAD'])
+
+    const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, claimEnv)
+    assert.equal(claimResult.code, 1)
+    assert.equal(claimResult.output.includes('You already have an issued claim for skillcraft-gg/hello-world'), true)
+    assert.equal(claimResult.output.includes('Existing issue: #4700'), true)
+    assert.equal(claimResult.output.includes('opened claim:'), false)
 
     runCli(['disable'], repo, cliEnv)
   })

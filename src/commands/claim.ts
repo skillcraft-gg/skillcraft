@@ -50,10 +50,18 @@ export async function runClaimStatus(reference: string): Promise<void> {
 }
 
 export async function runClaim(credential: string, opts: { allRepos?: boolean; repo?: string[] }): Promise<void> {
+  const config = await loadGlobalConfig()
+  const provider = getProvider(config.provider ?? 'gh')
+
+  const claimant = await resolveClaimant(provider)
+
   const payload = await makeClaimPayload(credential, {
     allRepos: opts?.allRepos,
     repo: opts?.repo,
-  })
+  }, claimant)
+
+  const normalizedCredential = normalizeText(credential)
+  const normalizedClaimant = normalizeText(claimant)
 
   const unpushed = await findUnpushedCommits(payload.sources)
   if (unpushed.length > 0) {
@@ -65,17 +73,90 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
     return
   }
 
+  if (normalizedCredential && normalizedClaimant) {
+    await ensureNotIssuedClaim(provider, normalizedCredential, normalizedClaimant)
+  }
+
   const yamlPayload = yaml.stringify(payload)
-  const config = await loadGlobalConfig()
-  const provider = getProvider(config.provider ?? 'gh')
   const issue = await provider.createIssue('skillcraft-gg/credential-ledger', `claim: ${credential}`, yamlPayload)
   process.stdout.write(`opened claim: #${issue}\n`)
   process.stdout.write(`payload:\n${yamlPayload}\n`)
 }
 
+async function resolveClaimant(provider: ReturnType<typeof getProvider>): Promise<string> {
+  const envUser = process.env.GITHUB_USER || process.env.USER || ''
+  try {
+    const user = await provider.getUser()
+    if (user) {
+      return user
+    }
+  } catch {
+  }
+  return envUser || 'unknown'
+}
+
+function normalizeText(value: string) {
+  return (value || '').trim().toLowerCase()
+}
+
+async function ensureNotIssuedClaim(provider: ReturnType<typeof getProvider>, credential: string, claimant: string): Promise<void> {
+  const issues = await provider.listClaimIssues('skillcraft-gg/credential-ledger')
+
+  const alreadyIssued = issues.find((issue) => {
+    if (!issueHasLabel(issue, 'skillcraft-issued')) {
+      return false
+    }
+
+    const parsed = parseClaimMetadataFromBody(issue.body)
+    if (!parsed) {
+      return false
+    }
+
+    return parsed.credential === credential && parsed.claimant === claimant
+  })
+
+  if (!alreadyIssued) {
+    return
+  }
+
+  const suffix = alreadyIssued.url ? ` (${alreadyIssued.url})` : ''
+  throw new Error(`You already have an issued claim for ${credential}. Existing issue: #${alreadyIssued.number}${suffix}`)
+}
+
+function parseClaimMetadataFromBody(body?: string): { credential: string; claimant: string } | undefined {
+  if (!body) {
+    return undefined
+  }
+
+  try {
+    const normalizedBody = String(body).replace(/\\n/g, '\n')
+    const parsed = yaml.parse(normalizedBody)
+    if (!parsed || typeof parsed !== 'object') {
+      return undefined
+    }
+
+    const rawCredential = parsed.credential && typeof parsed.credential === 'string' ? parsed.credential : parsed.credential?.id
+    const rawClaimant = parsed.claimant?.github
+    const credential = normalizeText(rawCredential)
+    const claimant = normalizeText(rawClaimant)
+    if (!credential || !claimant) {
+      return undefined
+    }
+    return { credential, claimant }
+  } catch {
+    return undefined
+  }
+}
+
+function issueHasLabel(issue: { labels?: Array<{ name: string }> }, expected: string): boolean {
+  const normalized = expected.toLowerCase()
+  return (issue.labels || []).some((entry) => normalizeText(entry?.name) === normalized)
+}
+
 async function makeClaimPayload(
   credential: string,
   options: { allRepos?: boolean; repo?: string[] },
+  claimant = process.env.GITHUB_USER || process.env.USER || 'unknown',
 ): Promise<{
   claim_version: number
   claimant: { github: string }
@@ -96,7 +177,7 @@ async function makeClaimPayload(
     })
   }
 
-  const username = process.env.GITHUB_USER || process.env.USER || 'unknown'
+  const username = claimant
   const claimSeed = `${username}:${credential}:${sources.map((s) => `${s.repo}:${s.commits.length}`).join('|')}:${Date.now()}`
   const claimId = createHash('sha256').update(claimSeed).digest('hex').slice(0, 8)
 
