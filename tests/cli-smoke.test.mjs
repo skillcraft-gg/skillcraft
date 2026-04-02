@@ -761,6 +761,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const result = runCli(['verify'], repo, cliEnv)
     assertOk(t, result, 'verify passed: 0 commit proofs resolved')
+    assert.ok(result.output.includes('⚠️ Warning: no git remotes configured for repository'))
 
     runCli(['disable'], repo, cliEnv)
   })
@@ -807,6 +808,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const result = runCli(['verify'], repo, cliEnv)
     assertOk(t, result, `verify passed: 1 commit proofs resolved`)
+    assert.ok(result.output.includes('⚠️ Warning: no git remotes configured for repository'))
 
     runCli(['disable'], repo, cliEnv)
   })
@@ -838,6 +840,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const verifyResult = runCli(['verify'], repo, cliEnv)
     assertOk(t, verifyResult, 'verify passed: 1 commit proofs resolved')
+    assert.ok(verifyResult.output.includes('⚠️ Warning: no git remotes configured for repository'))
 
     runCli(['disable'], repo, cliEnv)
   })
@@ -904,8 +907,34 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const remoteResult = runCli(['verify'], clone, cliEnv)
     assertOk(t, remoteResult, `verify passed: 1 commit proofs resolved`)
+    assert.ok(remoteResult.output.includes(`remote status: ${remote} (all referenced proof commits present)`))
 
     assert.equal(existsSync(join(clone, '.git', 'refs', 'heads', 'skillcraft', 'proofs', 'v1')), false)
+  })
+
+  test('verify warns when proof commits are not pushed to remote', (t) => {
+    const repo = makeRepo(tempBase, 'verify-unpushed-proof')
+    const remote = join(tempBase, 'verify-unpushed-proof-origin.git')
+
+    runCli(['enable'], repo, cliEnv)
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+
+    const pending = join(repo, '.git', 'skillcraft', 'pending.json')
+    writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
+    writeFileSync(join(repo, 'proof.txt'), 'change\n')
+    runGit(repo, ['add', 'proof.txt'])
+    runGit(repo, ['commit', '-m', 'add proof file'], { ...cliEnv, SKILLCRAFT_HOOK_DISABLED: '1' })
+
+    runGit(repo, ['remote', 'add', 'origin', remote])
+    const hookResult = runCli(['_hook', 'post-commit', repo], repo, cliEnv)
+    assertOk(t, hookResult, '')
+
+    const result = runCli(['verify'], repo, cliEnv)
+    assertOk(t, result, `verify passed: 1 commit proofs resolved`)
+    assert.ok(result.output.includes(`⚠️ Warning: proof commits not pushed to ${remote}:`))
+
+    runCli(['disable'], repo, cliEnv)
   })
 
   after(() => {
