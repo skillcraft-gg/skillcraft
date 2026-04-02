@@ -203,6 +203,7 @@ Example:
 skills. Loadout IDs remain local `owner/slug` only.
 
 The commit hook converts pending events into proof objects.
+When no events are queued, the hook still writes a proof with an empty `skills` list.
 
 When Opencode is enabled, the managed plugin captures runtime provenance and
 writes it to `.git/skillcraft/ai-model-context.json` so proof files include:

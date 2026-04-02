@@ -684,6 +684,37 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('proofs are created even when no skills are queued', (t) => {
+    const repo = makeRepo(tempBase, 'proof-empty-branch')
+    runCli(['enable'], repo, cliEnv)
+
+    writeFileSync(join(repo, 'proof-empty.txt'), 'change\n')
+    runGit(repo, ['add', 'proof-empty.txt'])
+    runGit(repo, ['commit', '-m', 'add empty proof commit'])
+
+    const hookResult = runCli(['_hook', 'post-commit', repo], repo, cliEnv)
+    assertOk(t, hookResult, '')
+
+    const headMessage = runGit(repo, ['log', '-n', '1', '--pretty=%B'])
+    const match = headMessage.match(/Skillcraft-Ref:\s*(\S+)/)
+    assert.ok(match)
+    const proofId = match?.[1]
+    assert.equal(typeof proofId, 'string')
+
+    const proofFiles = runGit(repo, ['ls-tree', '-r', '--name-only', 'skillcraft/proofs/v1', '--', 'proofs'])
+    assert.ok(proofFiles.includes(`proofs/${proofId}.json`))
+
+    const proofJson = runGit(repo, [`show`, `skillcraft/proofs/v1:proofs/${proofId}.json`])
+    const proof = JSON.parse(proofJson)
+    assert.ok(Array.isArray(proof.skills))
+    assert.equal(proof.skills.length, 0)
+
+    const verifyResult = runCli(['verify'], repo, cliEnv)
+    assertOk(t, verifyResult, 'verify passed: 1 commit proofs resolved')
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
   test('progress handles multiple tracked repositories with no credentials tracked', (t) => {
     const repoA = makeRepo(tempBase, 'progress-agg-c')
     const repoB = makeRepo(tempBase, 'progress-agg-d')

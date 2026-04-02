@@ -16,7 +16,8 @@ Evidence consists of:
 1. Agent executes skill.
 2. Plugin records event locally.
 3. Commit hook generates proof.
-4. Commit receives trailer referencing proof.
+4. If no skill events are queued, the generated proof may include an empty skill list.
+5. Commit receives trailer referencing proof.
 
 Example trailer:
 

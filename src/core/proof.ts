@@ -386,18 +386,16 @@ export async function buildProofFromPending(
   timestamp: string = new Date().toISOString(),
 ): Promise<{ proofId: string; proof: Proof } | undefined> {
   const pending = await loadPending(repoPath)
-  if (!pending.length) {
-    return undefined
-  }
   const loadouts = await loadContext(repoPath)
   const aiModelContext = await loadAiModelContext(repoPath)
+  const parsedSkills = pending
+    .map((skill) => parseSkillFromRaw(skill))
+    .filter((entry): entry is { id: string; version?: string } => !!entry)
 
   const proof: Proof = {
     version: 1,
     commit,
-    skills: pending
-      .map((skill) => parseSkillFromRaw(skill))
-      .filter((entry): entry is { id: string; version?: string } => !!entry),
+    skills: parsedSkills,
     loadouts,
     timestamp,
     ...aiModelContext,
