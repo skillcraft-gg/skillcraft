@@ -111,7 +111,7 @@ program
   .description('Verify local Skillcraft proofs and trailers')
   .action(withCommand(runVerify))
 
-const claimCommand = program.command('claim').description('Claim a credential or inspect claim issues')
+const claimCommand = program.command('claim').description('Claim a credential or inspect your claims')
 claimCommand
   .argument('[credential]', 'credential identifier')
   .option('--all-repos', 'include tracked repositories')
@@ -131,7 +131,7 @@ claimCommand
 
 claimCommand
   .command('list')
-  .description('List claims in the credentials repository')
+  .description('List your claims in the credentials repository')
   .action(withCommand(runClaimList))
 
 claimCommand

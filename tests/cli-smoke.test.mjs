@@ -130,7 +130,11 @@ function makeFakeGhScript(binDir) {
       '  exit 0',
       'fi',
       'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
-      "  echo '{\"state\":\"open\",\"labels\":[{\"name\":\"skillcraft-claim\"},{\"name\":\"skillcraft-processing\"}],\"url\":\"https://github.com/skillcraft-gg/credential-ledger/issues/4711\"}'",
+      '  if [ -n "$SKILLCRAFT_FAKE_GH_ISSUE_VIEW_JSON" ]; then',
+      '    echo "$SKILLCRAFT_FAKE_GH_ISSUE_VIEW_JSON"',
+      '  else',
+      "    echo '{\"state\":\"open\",\"labels\":[{\"name\":\"skillcraft-claim\"},{\"name\":\"skillcraft-processing\"}],\"url\":\"https://github.com/skillcraft-gg/credential-ledger/issues/4711\"}'",
+      '  fi',
       '  exit 0',
       'fi',
       'if [ "$1" = "issue" ] && [ "$2" = "list" ]; then',
@@ -630,6 +634,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const result = runCli(['claim', 'list'], plain, listEnv)
     assert.equal(result.code, 0)
+    assertOk(t, result, '(pending)')
     assert.ok(result.output.includes('#4711'))
     assert.ok(!result.output.includes('#4712'))
     assert.ok(!result.output.includes('claim: skillcraft-gg/other'))
@@ -661,11 +666,36 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const result = runCli(['claim', 'status', 'skillcraft-gg/hello-world'], plain, statusEnv)
     assertOk(t, result, 'issue #4711')
-    assertOk(t, result, 'state: open')
+    assertOk(t, result, 'state: processing')
     assertOk(t, result, 'labels: skillcraft-claim, skillcraft-processing')
     assertOk(t, result, 'processing actions: completed (success)')
     assertOk(t, result, 'latest run: https://github.com/skillcraft-gg/credential-ledger/actions/runs/1001')
     assertOk(t, result, 'previous attempts: 1')
+  })
+
+  test('claim status uses claim labels over issue state', (t) => {
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-status-label')
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const statusEnv = {
+      ...cliEnv,
+      PATH: `${dirname(fakeGh)}:${cliEnv.PATH || process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_ISSUE_LIST_JSON: JSON.stringify([
+        {
+          number: 4711,
+          title: 'claim: skillcraft-gg/hello-world',
+          state: 'closed',
+          body: 'claim_version: 1\nclaimant:\n  github: test-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
+          labels: [{ name: 'skillcraft-claim' }],
+        },
+      ]),
+      SKILLCRAFT_FAKE_GH_ISSUE_VIEW_JSON:
+        '{"state":"closed","labels":[{"name":"skillcraft-claim"},{"name":"skillcraft-issued"}],"url":"https://github.com/skillcraft-gg/credential-ledger/issues/4711"}',
+    }
+
+    const result = runCli(['claim', 'status', 'skillcraft-gg/hello-world'], plain, statusEnv)
+    assertOk(t, result, 'issue #4711')
+    assertOk(t, result, 'state: issued')
+    assertOk(t, result, 'labels: skillcraft-claim, skillcraft-issued')
   })
 
   test('claim status reports missing claim clearly', (t) => {
@@ -687,7 +717,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     const result = runCli(['claim', 'status', 'skillcraft-gg/missing'], plain, statusMissingEnv)
     assert.equal(result.code, 1)
-    assert.equal(result.output.includes('No claim found for credential skillcraft-gg/missing for user test-user. Run "skillcraft claim" to see your claim issues.'), true)
+    assert.equal(result.output.includes('No claim found for credential skillcraft-gg/missing for user test-user. Run "skillcraft claim" to see your claims.'), true)
     assert.equal(result.output.includes('Command failed: gh issue view'), false)
   })
 

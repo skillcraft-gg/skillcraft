@@ -23,12 +23,12 @@ export async function runClaimList(): Promise<void> {
   })
 
   if (!matching.length) {
-    process.stdout.write(`no claim issues found for ${claimant || 'user'}\n`)
+    process.stdout.write(`no claims found for ${claimant || 'user'}\n`)
     return
   }
 
   for (const issue of matching) {
-    process.stdout.write(`#${issue.number} ${issue.title} (${issue.state})\n`)
+    process.stdout.write(`#${issue.number} ${issue.title} (${getClaimLifecycleStatus(issue.labels?.map((entry) => entry?.name) || [])})\n`)
   }
 
   return
@@ -46,13 +46,13 @@ export async function runClaimStatus(reference: string): Promise<void> {
 
   const issue = await findClaimIssue(provider, credential, claimant)
   if (!issue) {
-    throw new Error(`No claim found for credential ${credential} for user ${claimant || 'unknown'}. Run "skillcraft claim" to see your claim issues.`)
+    throw new Error(`No claim found for credential ${credential} for user ${claimant || 'unknown'}. Run "skillcraft claim" to see your claims.`)
   }
 
   const status = await provider.getIssueStatus('skillcraft-gg/credential-ledger', issue)
   const runs = await provider.listClaimProcessingRuns('skillcraft-gg/credential-ledger', issue)
   process.stdout.write(`issue #${issue}\n`)
-  process.stdout.write(`state: ${status.state}\n`)
+  process.stdout.write(`state: ${getClaimLifecycleStatus(status.labels)}\n`)
   process.stdout.write(`labels: ${status.labels.join(', ') || 'none'}\n`)
   process.stdout.write(`url: ${status.url}\n`)
 
@@ -191,6 +191,25 @@ function parseClaimMetadataFromBody(body?: string): { credential: string; claima
 function issueHasLabel(issue: { labels?: Array<{ name: string }> }, expected: string): boolean {
   const normalized = expected.toLowerCase()
   return (issue.labels || []).some((entry) => normalizeText(entry?.name) === normalized)
+}
+
+function getClaimLifecycleStatus(labels: string[] | undefined): string {
+  const normalized = new Set((labels || []).map((value) => normalizeText(value)))
+
+  if (normalized.has('skillcraft-issued')) {
+    return 'issued'
+  }
+  if (normalized.has('skillcraft-rejected')) {
+    return 'rejected'
+  }
+  if (normalized.has('skillcraft-verified')) {
+    return 'verified'
+  }
+  if (normalized.has('skillcraft-processing')) {
+    return 'processing'
+  }
+
+  return 'pending'
 }
 
 async function makeClaimPayload(
