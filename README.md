@@ -1,6 +1,6 @@
 # Skillcraft
 
-Turn your work into verifiable AI credentials. Capture what you build, share your progress, and earn verifiable credentials that prove measurable real-world AI engineering work.
+Turn your work into verifiable AI credentials. Capture what you build, share your progress, and earn verifiable credentials that prove your AI coding skills.
 
 ## Install
 
