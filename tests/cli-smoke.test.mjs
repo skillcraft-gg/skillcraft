@@ -145,6 +145,10 @@ function makeFakeGhScript(binDir) {
       "  echo '[{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"success\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1001\",\"createdAt\":\"2026-04-01T00:00:00Z\",\"workflowName\":\"Process credential claims\"},{\"name\":\"Process claim issue #4711\",\"status\":\"completed\",\"conclusion\":\"failure\",\"url\":\"https://github.com/skillcraft-gg/credential-ledger/actions/runs/1000\",\"createdAt\":\"2026-03-31T23:00:00Z\",\"workflowName\":\"Process credential claims\"}]'",
       '  exit 0',
       'fi',
+      'if [ "$1" = "api" ] && [ "$2" = "user" ]; then',
+      '  echo "test-user"',
+      '  exit 0',
+      'fi',
       'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then',
       "  echo '{\"user\": {\"login\": \"test-user\"}}'",
       '  exit 0',
@@ -527,6 +531,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const claimEnv = {
       ...credentialCliEnv,
       PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+      USER: 'local-mac-user',
     }
 
     let result = runCli(['enable'], repo, cliEnv)
@@ -542,6 +547,8 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, claimEnv)
     assert.equal(claimResult.code, 0)
     assert.equal(claimResult.output.includes('opened claim: #4711'), true)
+    assert.equal(claimResult.output.includes('github: test-user'), true)
+    assert.equal(claimResult.output.includes('github: local-mac-user'), false)
     assert.equal(
       claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'),
       false,

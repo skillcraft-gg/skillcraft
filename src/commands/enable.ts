@@ -1,5 +1,6 @@
 import { isGitRepo, gitRoot, gitRemote } from '@/core/git'
 import path from 'node:path'
+import { getProvider } from '@/providers'
 import {
   skillcraftGlobalDir,
   localGitDir,
@@ -25,7 +26,8 @@ export async function runEnable(): Promise<void> {
 
   const config = await loadGlobalConfig()
   if (!config.githubUser) {
-    const fallback = process.env.GITHUB_USER || process.env.USER || 'developer'
+    const provider = getProvider(config.provider ?? 'gh')
+    const fallback = await provider.getUser().catch(() => process.env.GITHUB_USER || process.env.USER || 'developer')
     await saveGlobalConfig({ ...config, githubUser: fallback })
   }
 

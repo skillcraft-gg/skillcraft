@@ -11,7 +11,7 @@ import { findUnpushedCommits } from '@/core/remote'
 export async function runClaimList(): Promise<void> {
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
-  const claimant = await resolveClaimant(provider)
+  const claimant = await resolveClaimant(provider, config.githubUser)
   const issues = await provider.listClaimIssues('skillcraft-gg/credential-ledger')
 
   const matching = issues.filter((issue) => {
@@ -42,7 +42,7 @@ export async function runClaimStatus(reference: string): Promise<void> {
 
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
-  const claimant = await resolveClaimant(provider)
+  const claimant = await resolveClaimant(provider, config.githubUser)
 
   const issue = await findClaimIssue(provider, credential, claimant)
   if (!issue) {
@@ -93,7 +93,7 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
 
-  const claimant = await resolveClaimant(provider)
+  const claimant = await resolveClaimant(provider, config.githubUser)
 
   const payload = await makeClaimPayload(credential, {
     allRepos: opts?.allRepos,
@@ -123,7 +123,7 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
   process.stdout.write(`payload:\n${yamlPayload}\n`)
 }
 
-async function resolveClaimant(provider: ReturnType<typeof getProvider>): Promise<string> {
+async function resolveClaimant(provider: ReturnType<typeof getProvider>, configuredUser?: string): Promise<string> {
   const envUser = process.env.GITHUB_USER || process.env.USER || ''
   try {
     const user = await provider.getUser()
@@ -132,7 +132,7 @@ async function resolveClaimant(provider: ReturnType<typeof getProvider>): Promis
     }
   } catch {
   }
-  return envUser || 'unknown'
+  return configuredUser || envUser || 'unknown'
 }
 
 function normalizeText(value: string) {
@@ -215,7 +215,7 @@ function getClaimLifecycleStatus(labels: string[] | undefined): string {
 async function makeClaimPayload(
   credential: string,
   options: { allRepos?: boolean; repo?: string[] },
-  claimant = process.env.GITHUB_USER || process.env.USER || 'unknown',
+  claimant = 'unknown',
 ): Promise<{
   claim_version: number
   claimant: { github: string }

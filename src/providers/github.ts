@@ -105,9 +105,7 @@ export class GitHubProvider implements ForgeProvider {
   }
 
   async getUser(): Promise<string> {
-    const json = await runGh(['auth', 'status', '--json', 'user'])
-    const parsed = JSON.parse(json) as { user?: { login?: string } }
-    return parsed.user?.login || ''
+    return await runGh(['api', 'user', '--jq', '.login'])
   }
 
   async getIssueUrl(repo: string, number: number): Promise<string> {
