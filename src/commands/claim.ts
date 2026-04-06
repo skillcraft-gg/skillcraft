@@ -89,6 +89,32 @@ async function findClaimIssue(provider: ReturnType<typeof getProvider>, credenti
   return matches.sort((a, b) => b - a)[0]
 }
 
+async function findOpenClaimIssue(
+  provider: ReturnType<typeof getProvider>,
+  credential: string,
+  claimant: string,
+): Promise<{
+  number: number
+  state: string
+  url?: string
+  labels?: Array<{ name: string }>
+} | undefined> {
+  const issues = await provider.listClaimIssues('skillcraft-gg/credential-ledger')
+  const normalizedCredential = normalizeText(credential)
+  const normalizedClaimant = normalizeText(claimant)
+
+  const matches = issues.filter((issue) => {
+    if (normalizeText(issue.state) !== 'open') {
+      return false
+    }
+
+    const parsed = parseClaimMetadataFromBody(issue.body)
+    return !!parsed && parsed.claimant === normalizedClaimant && parsed.credential === normalizedCredential
+  })
+
+  return matches.sort((a, b) => a.number - b.number)[0]
+}
+
 export async function runClaim(credential: string, opts: { allRepos?: boolean; repo?: string[] }): Promise<void> {
   const config = await loadGlobalConfig()
   const provider = getProvider(config.provider ?? 'gh')
@@ -114,6 +140,16 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
   }
 
   if (normalizedCredential && normalizedClaimant) {
+    const existing = await findOpenClaimIssue(provider, normalizedCredential, normalizedClaimant)
+    if (existing) {
+      const url = existing.url || await provider.getIssueUrl('skillcraft-gg/credential-ledger', existing.number)
+      process.stdout.write('claim already submitted\n')
+      process.stdout.write(`issue: #${existing.number}\n`)
+      process.stdout.write(`state: ${getClaimLifecycleStatus(existing.labels?.map((entry) => entry?.name) || [])}\n`)
+      process.stdout.write(`url: ${url}\n`)
+      return
+    }
+
     await ensureNotIssuedClaim(provider, normalizedCredential, normalizedClaimant)
   }
 

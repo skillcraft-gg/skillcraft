@@ -122,8 +122,6 @@ export class GitHubProvider implements ForgeProvider {
       title,
       '--body',
       body,
-      '--label',
-      'skillcraft-claim',
     ])
     const match = raw.match(/\b(\d+)$/)
     if (!match) {
@@ -263,14 +261,12 @@ export class GitHubProvider implements ForgeProvider {
       'list',
       '--repo',
       repo,
-      '--label',
-      'skillcraft-claim',
       '--state',
       'all',
       '--json',
       'number,title,state,body,labels,url',
       '--limit',
-      '50',
+      '100',
     ])
     const parsed = JSON.parse(raw) as Array<{
       number: number
@@ -280,7 +276,7 @@ export class GitHubProvider implements ForgeProvider {
       labels?: Array<{ name: string }>
       url?: string
     }>
-    return parsed
+    return parsed.filter((issue) => hasClaimTitle(issue.title) || hasLabel(issue.labels, 'skillcraft-claim'))
   }
 
   async cloneRepo(fullName: string, destination: string): Promise<void> {
@@ -296,4 +292,17 @@ export class GitHubProvider implements ForgeProvider {
     await fs.mkdir(destination, { recursive: true })
     await copyDirRecursively(source, destination)
   }
+}
+
+function normalizeText(value?: string): string {
+  return String(value || '').trim().toLowerCase()
+}
+
+function hasClaimTitle(title?: string): boolean {
+  return normalizeText(title).startsWith('claim:')
+}
+
+function hasLabel(labels: Array<{ name: string }> | undefined, expected: string): boolean {
+  const normalized = normalizeText(expected)
+  return (labels || []).some((entry) => normalizeText(entry?.name) === normalized)
 }

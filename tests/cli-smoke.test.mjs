@@ -172,6 +172,18 @@ function makeFakeGhScript(binDir) {
     [
       '#!/usr/bin/env sh',
       'if [ "$1" = "issue" ] && [ "$2" = "create" ]; then',
+      '  if [ -n "$SKILLCRAFT_FAKE_GH_REJECT_LABEL_CREATE" ]; then',
+      '    for arg in "$@"; do',
+      '      if [ "$arg" = "--label" ]; then',
+      '        echo "label creation not allowed" >&2',
+      '        exit 1',
+      '      fi',
+      '    done',
+      '  fi',
+      '  if [ -n "$SKILLCRAFT_FAKE_GH_ISSUE_CREATE_FAIL" ]; then',
+      '    echo "unexpected issue create" >&2',
+      '    exit 1',
+      '  fi',
       '  echo "https://github.com/skillcraft-gg/credential-ledger/issues/4711"',
       '  exit 0',
       'fi',
@@ -616,6 +628,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const claimEnv = {
       ...credentialCliEnv,
       PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_REJECT_LABEL_CREATE: '1',
       USER: 'local-mac-user',
     }
 
@@ -638,6 +651,65 @@ describe('Skillcraft CLI surface smoke tests', () => {
       claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'),
       false,
     )
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('claim reports already submitted open claim for current user', (t) => {
+    const repo = makeRepo(tempBase, 'claim-open-duplicate')
+    const remote = join(tempBase, 'claim-open-duplicate-origin.git')
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-open-duplicate')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const claimEnv = {
+      ...credentialCliEnv,
+      PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_ISSUE_CREATE_FAIL: '1',
+      SKILLCRAFT_FAKE_GH_ISSUE_LIST_JSON: JSON.stringify([
+        {
+          number: 4701,
+          title: 'claim: skillcraft-gg/hello-world',
+          state: 'open',
+          body: 'claim_version: 1\nclaimant:\n  github: test-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
+          url: 'https://github.com/skillcraft-gg/credential-ledger/issues/4701',
+          labels: [],
+        },
+      ]),
+    }
+
+    let result = runCli(['enable'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+
+    addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], claimEnv)
+    runGit(repo, ['push', 'origin', 'HEAD'])
+
+    const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, claimEnv)
+    assert.equal(claimResult.code, 0)
+    assert.equal(claimResult.output.includes('claim already submitted'), true)
+    assert.equal(claimResult.output.includes('issue: #4701'), true)
+    assert.equal(claimResult.output.includes('state: pending'), true)
+    assert.equal(claimResult.output.includes('url: https://github.com/skillcraft-gg/credential-ledger/issues/4701'), true)
+    assert.equal(claimResult.output.includes('opened claim:'), false)
 
     runCli(['disable'], repo, cliEnv)
   })
@@ -712,14 +784,14 @@ describe('Skillcraft CLI surface smoke tests', () => {
           title: 'claim: skillcraft-gg/hello-world',
           state: 'open',
           body: 'claim_version: 1\nclaimant:\n  github: test-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
-          labels: [{ name: 'skillcraft-claim' }],
+          labels: [],
         },
         {
           number: 4712,
           title: 'claim: skillcraft-gg/other',
           state: 'closed',
           body: 'claim_version: 1\nclaimant:\n  github: other-user\ncredential:\n  id: skillcraft-gg/other\nsources: []',
-          labels: [{ name: 'skillcraft-claim' }],
+          labels: [],
         },
       ]),
     }
@@ -744,14 +816,14 @@ describe('Skillcraft CLI surface smoke tests', () => {
           title: 'claim: skillcraft-gg/other',
           state: 'open',
           body: 'claim_version: 1\nclaimant:\n  github: other-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
-          labels: [{ name: 'skillcraft-claim' }],
+          labels: [],
         },
         {
           number: 4711,
           title: 'claim: skillcraft-gg/hello-world',
           state: 'closed',
           body: 'claim_version: 1\nclaimant:\n  github: test-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
-          labels: [{ name: 'skillcraft-claim' }],
+          labels: [],
         },
       ]),
     }
@@ -777,7 +849,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
           title: 'claim: skillcraft-gg/hello-world',
           state: 'closed',
           body: 'claim_version: 1\nclaimant:\n  github: test-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
-          labels: [{ name: 'skillcraft-claim' }],
+          labels: [],
         },
       ]),
       SKILLCRAFT_FAKE_GH_ISSUE_VIEW_JSON:
@@ -802,7 +874,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
           title: 'claim: skillcraft-gg/other',
           state: 'open',
           body: 'claim_version: 1\nclaimant:\n  github: other-user\ncredential:\n  id: skillcraft-gg/hello-world\nsources: []',
-          labels: [{ name: 'skillcraft-claim' }],
+          labels: [],
         },
       ]),
     }
