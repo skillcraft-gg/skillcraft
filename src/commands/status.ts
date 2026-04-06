@@ -1,9 +1,10 @@
 import { isGitRepo, gitHeadCommit, gitLogWithMessages, gitHasRef } from '@/core/git'
 import { loadPending, currentProofIdForCommit } from '@/core/proof'
-import { localSkillcraftConfig, contextPath, localRepoHookPath } from '@/core/paths'
+import { contextPath, localRepoHookPath } from '@/core/paths'
 import { fileExists } from '@/core/fs'
 import { isEnabled } from '@/core/state'
 import { loadLocalConfig } from '@/core/config'
+import { getProvider } from '@/providers'
 
 export async function runStatus(): Promise<void> {
   const cwd = process.cwd()
@@ -44,29 +45,38 @@ export async function runStatus(): Promise<void> {
 }
 
 export async function runDoctor(): Promise<void> {
-  const cwd = process.cwd()
-  const checks = [
-    ['node', !!process.version],
-    ['git', (await isGitRepo(cwd))],
-    ['skillcraft config', await fileExists(localSkillcraftConfig(cwd))],
-    ['plugin hook', await fileExists(localRepoHookPath(cwd))],
-  ]
+  const checks = await Promise.all([
+    checkTool('node'),
+    checkTool('npm'),
+    checkTool('git'),
+    checkTool('gh'),
+    checkTool('opencode'),
+  ])
 
   for (const [name, ok] of checks) {
     process.stdout.write(`${name}: ${ok ? 'ok' : 'missing'}\n`)
   }
 
-  if (!process.env.GITHUB_TOKEN && !(await isToolAvailable('gh'))) {
-    process.stdout.write('gh: not installed\n')
+  const ghAvailable = checks.find(([name]) => name === 'gh')?.[1] ?? false
+  if (!ghAvailable) {
+    process.stdout.write('gh auth: missing\n')
+    process.stdout.write('github user: unknown\n')
     return
   }
-  process.stdout.write('gh: available\n')
+
+  const login = await getProvider('gh').getUser().catch(() => '')
+  process.stdout.write(`gh auth: ${login ? 'ok' : 'missing'}\n`)
+  process.stdout.write(`github user: ${login || 'unknown'}\n`)
+}
+
+async function checkTool(tool: string): Promise<[string, boolean]> {
+  return [tool, await isToolAvailable(tool)]
 }
 
 async function isToolAvailable(tool: string): Promise<boolean> {
   try {
     const { execSync } = await import('node:child_process')
-    execSync(`command -v ${tool}`)
+    execSync(`command -v ${tool}`, { stdio: 'ignore' })
     return true
   } catch {
     return false

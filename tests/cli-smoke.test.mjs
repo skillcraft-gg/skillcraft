@@ -118,6 +118,52 @@ function addTrackedProof(repoDir, fileName, skills, env) {
   runCli(['_hook', 'post-commit', repoDir], repoDir, env)
 }
 
+function writeExecutable(filePath, lines) {
+  writeFileSync(filePath, lines.join('\n'))
+  chmodSync(filePath, 0o755)
+}
+
+function makeDoctorBin(binDir, options = {}) {
+  mkdirSync(binDir, { recursive: true })
+
+  writeExecutable(join(binDir, 'which'), [
+    '#!/bin/sh',
+    'dir="${0%/*}"',
+    'if [ -x "$dir/$1" ]; then',
+    '  echo "$dir/$1"',
+    '  exit 0',
+    'fi',
+    'exit 1',
+  ])
+
+  writeExecutable(join(binDir, 'node'), [
+    '#!/bin/sh',
+    `exec "${process.execPath}" "$@"`,
+  ])
+
+  for (const tool of options.tools || []) {
+    if (tool === 'gh') {
+      const command = options.ghLogin ? `echo "${options.ghLogin}"` : 'exit 1'
+      writeExecutable(join(binDir, 'gh'), [
+        '#!/bin/sh',
+        'if [ "$1" = "api" ] && [ "$2" = "user" ]; then',
+        `  ${command}`,
+        '  exit 0',
+        'fi',
+        'exit 0',
+      ])
+      continue
+    }
+
+    writeExecutable(join(binDir, tool), [
+      '#!/bin/sh',
+      'exit 0',
+    ])
+  }
+
+  return binDir
+}
+
 function makeFakeGhScript(binDir) {
   const fake = join(binDir, 'gh')
   mkdirSync(binDir, { recursive: true })
@@ -181,6 +227,45 @@ describe('Skillcraft CLI surface smoke tests', () => {
   test('status command in non-git directory', (t) => {
     const result = runCli(['status'], plain, cliEnv)
     assertOk(t, result, 'git: not a repository')
+  })
+
+  test('doctor checks documented install prerequisites', (t) => {
+    const doctorBin = makeDoctorBin(join(tempBase, 'doctor-bin-ready'), {
+      tools: ['npm', 'git', 'gh', 'opencode'],
+      ghLogin: 'test-user',
+    })
+    const doctorEnv = { ...cliEnv, PATH: doctorBin }
+
+    const result = runCli(['doctor'], plain, doctorEnv)
+    assert.equal(result.code, 0, `${t.name} exited with ${result.code}\n${result.output}`)
+    assert.ok(result.output.includes('node: ok'))
+    assert.ok(result.output.includes('npm: ok'))
+    assert.ok(result.output.includes('git: ok'))
+    assert.ok(result.output.includes('gh: ok'))
+    assert.ok(result.output.includes('gh auth: ok'))
+    assert.ok(result.output.includes('github user: test-user'))
+    assert.ok(result.output.includes('opencode: ok'))
+    assert.ok(!result.output.includes('skillcraft config:'))
+    assert.ok(!result.output.includes('plugin hook:'))
+  })
+
+  test('doctor reports missing auth and tools without repo checks', (t) => {
+    const doctorBin = makeDoctorBin(join(tempBase, 'doctor-bin-missing'), {
+      tools: ['npm', 'git', 'gh'],
+    })
+    const doctorEnv = { ...cliEnv, PATH: doctorBin }
+
+    const result = runCli(['doctor'], plain, doctorEnv)
+    assert.equal(result.code, 0, `${t.name} exited with ${result.code}\n${result.output}`)
+    assert.ok(result.output.includes('node: ok'))
+    assert.ok(result.output.includes('npm: ok'))
+    assert.ok(result.output.includes('git: ok'))
+    assert.ok(result.output.includes('gh: ok'))
+    assert.ok(result.output.includes('gh auth: missing'))
+    assert.ok(result.output.includes('github user: unknown'))
+    assert.ok(result.output.includes('opencode: missing'))
+    assert.ok(!result.output.includes('skillcraft config:'))
+    assert.ok(!result.output.includes('plugin hook:'))
   })
 
   test('enable/status/disable flow', (t) => {
