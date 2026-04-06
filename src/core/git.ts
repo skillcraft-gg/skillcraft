@@ -62,6 +62,15 @@ export async function gitHasRef(cwd: string, ref: string): Promise<boolean> {
   }
 }
 
+export async function gitIsAncestor(cwd: string, ancestor: string, descendant = 'HEAD'): Promise<boolean> {
+  try {
+    await git(['merge-base', '--is-ancestor', ancestor, descendant], cwd)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function gitLsTreeNames(cwd: string, ref: string, subPath?: string): Promise<string[]> {
   try {
     const raw = await git(['ls-tree', '-r', '--name-only', ref, '--', ...(subPath ? [subPath] : [])], cwd)

@@ -655,6 +655,64 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('claim ignores stale proof commits not reachable from HEAD', (t) => {
+    const repo = makeRepo(tempBase, 'claim-ignores-stale-proofs')
+    const remote = join(tempBase, 'claim-ignores-stale-proofs-origin.git')
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-ignores-stale-proofs')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const claimEnv = {
+      ...credentialCliEnv,
+      PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_REJECT_LABEL_CREATE: '1',
+      USER: 'local-mac-user',
+    }
+
+    let result = runCli(['enable'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    const defaultBranch = runGit(repo, ['branch', '--show-current'])
+
+    runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+
+    runGit(repo, ['checkout', '-b', 'stale-proof'])
+    addTrackedProof(repo, 'stale-proof.txt', ['acme/alpha'], claimEnv)
+    const staleCommit = runGit(repo, ['rev-parse', 'HEAD'])
+
+    runGit(repo, ['checkout', defaultBranch])
+    addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], claimEnv)
+    runGit(repo, ['push', 'origin', 'HEAD'])
+
+    const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, claimEnv)
+    assert.equal(claimResult.code, 0)
+    assert.equal(claimResult.output.includes('opened claim: #4711'), true)
+    assert.equal(
+      claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'),
+      false,
+    )
+    assert.equal(claimResult.output.includes(staleCommit), false)
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
   test('claim reports already submitted open claim for current user', (t) => {
     const repo = makeRepo(tempBase, 'claim-open-duplicate')
     const remote = join(tempBase, 'claim-open-duplicate-origin.git')

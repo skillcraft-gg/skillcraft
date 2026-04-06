@@ -5,7 +5,7 @@ import { hasSkillcraftDir } from '@/core/state'
 import { loadProofFromRepo } from '@/core/progress'
 import { getProvider } from '@/providers'
 import { loadGlobalConfig } from '@/core/config'
-import { gitRemote } from '@/core/git'
+import { gitIsAncestor, gitRemote } from '@/core/git'
 import { findUnpushedCommits } from '@/core/remote'
 
 export async function runClaimList(): Promise<void> {
@@ -265,7 +265,14 @@ async function makeClaimPayload(
     const proofs = await loadProofFromRepo(repoPath)
     const remote = (await gitRemote(repoPath)) || repoPath
 
-    const commitIds = Array.from(new Set(proofs.map((proof) => proof?.commit).filter(Boolean) as string[]))
+    const reachableProofs = await Promise.all(
+      proofs.map(async (proof) => ((await gitIsAncestor(repoPath, proof.commit)) ? proof : undefined)),
+    )
+
+    const commitIds = Array.from(
+      new Set(reachableProofs.map((proof) => proof?.commit).filter(Boolean) as string[]),
+    )
+
     sources.push({
       repo: remote,
       commits: commitIds,
