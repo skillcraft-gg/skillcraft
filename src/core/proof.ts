@@ -5,7 +5,7 @@ import fs from 'node:fs/promises'
 import { ensureDir, readJson, writeJson } from './fs.js'
 import { pendingPath, contextPath, aiModelContextPath } from './paths.js'
 import { DefaultProofRef, PendingSchema, ContextSchema, type Proof } from './types.js'
-import { git, gitCommitMessage, gitHasRef, gitLsTreeNames, gitRemote, gitShowText } from './git.js'
+import { git, gitCommitMessage, gitCreateUnrelatedBranch, gitHasRef, gitLsTreeNames, gitRemote, gitShowText } from './git.js'
 import { isValidSkillIdentifier, splitSkillIdentifier } from './validation.js'
 import { loadLocalConfig } from './config.js'
 
@@ -51,7 +51,7 @@ async function ensureProofBranch(repoPath: string, branch: string): Promise<void
     return
   }
 
-  await git(['branch', branch], repoPath)
+  await gitCreateUnrelatedBranch(repoPath, branch, 'Initialize Skillcraft proofs branch')
 }
 
 async function withProofWorktree<T>(repoPath: string, branch: string, action: (worktree: string) => Promise<T>): Promise<T> {

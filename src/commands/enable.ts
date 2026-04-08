@@ -11,7 +11,7 @@ import {
   unsupportedAgentOptions,
 } from '@/core/agents'
 import { ensureDir, writeJson } from '@/core/fs'
-import { git, gitHasRef, gitRemote, gitRoot, isGitRepo } from '@/core/git'
+import { gitCreateUnrelatedBranch, gitHasRef, gitRemote, gitRoot, isGitRepo } from '@/core/git'
 import { installPostCommitHook } from '@/core/hooks'
 import { contextPath, localGitDir, localSkillcraftConfig, pendingPath, skillcraftGlobalDir } from '@/core/paths'
 import { DefaultProofRef, type AgentIntegration } from '@/core/types'
@@ -40,7 +40,7 @@ export async function runEnable(options: EnableOptions = {}): Promise<void> {
 
   const branchRef = `refs/heads/${DefaultProofRef}`
   if (!(await gitHasRef(root, branchRef))) {
-    await git(['branch', DefaultProofRef], root)
+    await gitCreateUnrelatedBranch(root, DefaultProofRef, 'Initialize Skillcraft proofs branch')
   }
 
   await writeJson(localSkillcraftConfig(root), {

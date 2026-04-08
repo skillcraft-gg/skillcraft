@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 
@@ -21,6 +21,45 @@ export async function git(args: readonly string[], cwd: string, options: GitOpti
     const message = (error as { message?: string }).message ?? String(error)
     throw new Error(`git command failed in ${cwd}: ${message}`)
   }
+}
+
+async function gitWithInput(args: readonly string[], cwd: string, input: string, options: GitOptions = {}): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd,
+      env: options.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+
+    child.on('error', (error) => {
+      reject(new Error(`git command failed in ${cwd}: ${error.message}`))
+    })
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim())
+        return
+      }
+
+      const message = stderr.trim() || stdout.trim() || `process exited with code ${code ?? 'unknown'}`
+      reject(new Error(`git command failed in ${cwd}: ${message}`))
+    })
+
+    child.stdin.end(input)
+  })
 }
 
 export async function isGitRepo(cwd: string): Promise<boolean> {
@@ -60,6 +99,17 @@ export async function gitHasRef(cwd: string, ref: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+export async function gitCreateUnrelatedBranch(cwd: string, branch: string, message: string): Promise<void> {
+  const ref = `refs/heads/${branch}`
+  if (await gitHasRef(cwd, ref)) {
+    return
+  }
+
+  const emptyTree = await gitWithInput(['hash-object', '-t', 'tree', '--stdin'], cwd, '')
+  const commit = await git(['commit-tree', emptyTree, '-m', message], cwd)
+  await git(['update-ref', ref, commit], cwd)
 }
 
 export async function gitIsAncestor(cwd: string, ancestor: string, descendant = 'HEAD'): Promise<boolean> {

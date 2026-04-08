@@ -25,6 +25,15 @@ function runGit(cwd, args, env = process.env) {
   }).trim()
 }
 
+function runGitResult(cwd, args, env = process.env) {
+  return spawnSync('git', args, {
+    cwd,
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
 function runCli(args, cwd, env = process.env) {
   const result = spawnSync('node', [cli, ...args], {
     cwd,
@@ -134,6 +143,15 @@ function makeRepo(parentDir, name) {
   writeFileSync(join(repoDir, 'README.md'), '# temp repo\n')
   runGit(repoDir, ['add', 'README.md'])
   runGit(repoDir, ['commit', '-m', 'initial commit'])
+  return repoDir
+}
+
+function makeEmptyRepo(parentDir, name) {
+  const repoDir = join(parentDir, name)
+  mkdirSync(repoDir)
+  runGit(repoDir, ['init'])
+  runGit(repoDir, ['config', 'user.name', 'Skillcraft CLI Bot'])
+  runGit(repoDir, ['config', 'user.email', 'bot@example.com'])
   return repoDir
 }
 
@@ -454,6 +472,25 @@ describe('Skillcraft CLI surface smoke tests', () => {
     } finally {
       runCli(['disable'], repo, cliEnv)
     }
+  })
+
+  test('enable creates an unrelated proof branch in an empty repo', (t) => {
+    const repo = makeEmptyRepo(tempBase, 'enable-empty-repo')
+
+    let result = runCli(['enable', '--agent', 'codex'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    const proofBranchCommit = runGit(repo, ['rev-parse', 'skillcraft/proofs/v1'])
+    assert.equal(proofBranchCommit.length > 0, true)
+
+    writeFileSync(join(repo, 'README.md'), '# temp repo\n')
+    runGit(repo, ['add', 'README.md'])
+    runGit(repo, ['commit', '-m', 'initial main commit'])
+
+    const mergeBase = runGitResult(repo, ['merge-base', 'main', 'skillcraft/proofs/v1'])
+    assert.notEqual(mergeBase.status, 0)
+
+    runCli(['disable'], repo, cliEnv)
   })
 
   test('post-commit hook resolves repo root from subdirectory', (t) => {
