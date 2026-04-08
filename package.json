@@ -40,6 +40,8 @@
     "format": "printf ''",
     "start": "node dist/index.js",
     "check": "tsc --noEmit",
+    "prepare": "sh ./scripts/install-git-hooks.sh",
+    "commitlint": "commitlint --from HEAD~1 --to HEAD",
     "prepublishOnly": "npm run build"
   },
   "publishConfig": {
@@ -52,6 +54,8 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
     "@types/node": "^24.8.0",
     "tsup": "^8.5.0",
     "typescript": "^5.7.2"
