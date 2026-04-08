@@ -63,7 +63,43 @@ export function pluginPath(repoPath: string): string {
 }
 
 export function managedPluginPath(repoPath: string): string {
+  return opencodePluginPath(repoPath)
+}
+
+export function opencodePluginPath(repoPath: string): string {
   return path.join(repoPath, '.opencode', 'plugins', 'skillcraft.mjs')
+}
+
+export function codexConfigPath(repoPath: string): string {
+  return path.join(repoPath, '.codex', 'config.toml')
+}
+
+export function codexHooksPath(repoPath: string): string {
+  return path.join(repoPath, '.codex', 'hooks.json')
+}
+
+export function codexMarketplacePath(repoPath: string): string {
+  return path.join(repoPath, '.agents', 'plugins', 'marketplace.json')
+}
+
+export function codexPluginRootPath(repoPath: string): string {
+  return path.join(repoPath, 'plugins', 'skillcraft-codex')
+}
+
+export function codexPluginManifestPath(repoPath: string): string {
+  return path.join(codexPluginRootPath(repoPath), '.codex-plugin', 'plugin.json')
+}
+
+export function codexPluginSkillPath(repoPath: string): string {
+  return path.join(codexPluginRootPath(repoPath), 'skills', 'skillcraft', 'SKILL.md')
+}
+
+export function projectSkillsRootPath(repoPath: string): string {
+  return path.join(repoPath, '.agents', 'skills')
+}
+
+export function installedSkillsIndexPath(repoPath: string): string {
+  return path.join(projectSkillsRootPath(repoPath), '.skillcraft-index.json')
 }
 
 export function aiModelContextPath(repoPath: string): string {

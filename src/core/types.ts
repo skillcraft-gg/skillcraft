@@ -21,6 +21,34 @@ export const ProofModelSchema = z.object({
   name: z.string().optional(),
 })
 
+export const AgentIntegrationSchema = z.enum(['opencode', 'codex'])
+
+export const AgentStateSchema = z.object({
+  version: z.number().int().default(1),
+  providers: z.array(AgentIntegrationSchema).default([]),
+  enabled: z.boolean().default(true),
+})
+
+export const InstalledSkillInstallSchema = z.object({
+  type: z.enum(['github-directory', 'local-directory']),
+  repo: z.string().optional(),
+  ref: z.string().optional(),
+  path: z.string(),
+})
+
+export const InstalledSkillRecordSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  path: z.string(),
+  install: InstalledSkillInstallSchema,
+  installedAt: z.string(),
+})
+
+export const InstalledSkillsFileSchema = z.object({
+  version: z.number().int().default(1),
+  skills: z.array(InstalledSkillRecordSchema).default([]),
+})
+
 export const ConfigSchema = z.object({
   githubUser: z.string().optional(),
   provider: z.enum(['gh']).default('gh'),
@@ -69,6 +97,11 @@ export type TrackedCredentialsFile = z.infer<typeof TrackedCredentialsFileSchema
 export type Config = z.infer<typeof ConfigSchema>
 export type PendingFile = z.infer<typeof PendingSchema>
 export type ContextFile = z.infer<typeof ContextSchema>
+export type AgentIntegration = z.infer<typeof AgentIntegrationSchema>
+export type AgentState = z.infer<typeof AgentStateSchema>
+export type InstalledSkillInstall = z.infer<typeof InstalledSkillInstallSchema>
+export type InstalledSkillRecord = z.infer<typeof InstalledSkillRecordSchema>
+export type InstalledSkillsFile = z.infer<typeof InstalledSkillsFileSchema>
 
 export type CliCommandResult = {
   ok: boolean

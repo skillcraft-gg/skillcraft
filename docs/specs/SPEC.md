@@ -93,6 +93,10 @@ Skills:
 - `owner/slug` for skills in `skillcraft-gg/skills-registry`
 - `source:slug` or `source:owner/slug` for external registries
 
+Installed skills are materialized into `.agents/skills`. When a supported agent
+uses one of those installed skills, the managed Skillcraft integration records
+the corresponding skill ID into `.git/skillcraft/pending.json`.
+
 Loadouts:
   loadout use <id>      Activate a loadout for development
   loadout clear         Clear the active loadout
@@ -176,7 +180,9 @@ Example .skillcraft.json:
 
 Also installs:
 	•	git commit hook
-	•	managed OpenCode plugin integration at `.opencode/plugins/skillcraft.mjs`
+	•	managed agent integrations for the current repository only
+	•	OpenCode plugin at `.opencode/plugins/skillcraft.mjs` when OpenCode is enabled
+	•	Codex hooks/config/plugin scaffolding under `.codex/`, `.agents/plugins/`, and `plugins/skillcraft-codex/` when Codex is enabled
 	•	AI model provenance state at `.git/skillcraft/ai-model-context.json`
 	•	repo entry in ~/.skillcraft/repos.json
 
@@ -184,7 +190,7 @@ Also installs:
 
 Evidence Generation
 
-Skill usage events are captured by agent plugins.
+Skill usage events are captured by managed agent integrations.
 
 Plugins write pending events to:
 
@@ -199,14 +205,14 @@ Example:
   ]
 }
 
-`source:...` denotes a non-local source and is only accepted for `skills add` / queued
+`source:...` denotes a non-local source and is accepted for installed registry
 skills. Loadout IDs remain local `owner/slug` only.
 
 The commit hook converts pending events into proof objects.
 When no events are queued, the hook still writes a proof with an empty `skills` list.
 
-When OpenCode is enabled, the managed plugin captures runtime provenance and
-writes it to `.git/skillcraft/ai-model-context.json` so proof files include:
+When OpenCode or Codex is enabled, the managed integration captures runtime provenance
+and writes it to `.git/skillcraft/ai-model-context.json` so proof files include:
 
 - `agent.provider`
 - `model.provider`
@@ -406,11 +412,18 @@ Agent Integrations
 
 Skillcraft integrates with AI agent environments.
 
-Initial integration:
+Current integrations:
+	•	OpenCode via a managed repo-local plugin at `.opencode/plugins/skillcraft.mjs`
+	•	Codex CLI via repo-local `.codex/hooks.json`, `.codex/config.toml`, `.agents/plugins/marketplace.json`, and `plugins/skillcraft-codex/`
 
-OpenCode
+OpenCode records skill usage from its managed skill tool hook. Codex currently records
+explicit skill usage from repo-local hooks by reading explicit skill injections from
+the current turn transcript. Implicit Codex skill invocation capture depends on
+additional upstream hook metadata.
 
-Plugins monitor skill execution and record events.
+Enablement detects installed agents automatically. If both OpenCode and Codex are
+detected, `skillcraft enable` prompts unless `--agent` is supplied. Multiple agents may
+be enabled for the same repository.
 
 Future integrations may include:
 	•	Claude Code

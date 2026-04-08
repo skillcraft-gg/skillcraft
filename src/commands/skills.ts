@@ -1,16 +1,25 @@
 import path from 'node:path'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import { getProvider } from '@/providers'
 import { loadGlobalConfig } from '@/core/config'
 import { assertNonEmpty, splitArgPair, splitSkillIdentifier, normalizeSkillId } from '@/core/validation'
 import { isEnabled } from '@/core/state'
 import { loadProofFromRepo } from '@/core/progress'
-import { loadPending, normalizeSkillIds } from '@/core/proof'
-import { pendingPath } from '@/core/paths'
-import { writeJson } from '@/core/fs'
+import { loadPending } from '@/core/proof'
+import { projectSkillsRootPath } from '@/core/paths'
+import { ensureDir } from '@/core/fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import ora from 'ora'
+import {
+  buildInstalledSkillRecord,
+  loadInstalledSkills,
+  normalizeInstalledSkillName,
+  queueSkillUsage,
+  registerInstalledSkill,
+} from '@/core/installedSkills'
+import type { InstalledSkillInstall } from '@/core/types'
 
 const execPromise = promisify(execFile)
 
@@ -23,7 +32,15 @@ type SearchIndexEntry = {
   slug?: string
   runtime?: string[]
   tags?: string[]
+  install?: SearchIndexInstall
   updatedAt?: string
+}
+
+type SearchIndexInstall = {
+  type?: 'github-directory' | 'local-directory'
+  repo?: string
+  ref?: string
+  path?: string
 }
 
 type SearchIndexOptions = {
@@ -116,18 +133,41 @@ export async function runSkillsAdd(rawId: string): Promise<void> {
   if (!parsed.id) {
     throw new Error('invalid skill id format')
   }
+  if (parsed.version) {
+    throw new Error('skill versions are not supported for installation yet')
+  }
 
-  const index = await loadSearchIndex()
-  if (!index.has(parsed.id)) {
+  const entries = await loadSearchIndexEntries('text')
+  const entry = entries.find((candidate) => candidate.id === parsed.id)
+  if (!entry) {
     throw new Error(`skill ${parsed.id} is not listed in the search index`)
   }
 
-  const normalized = normalizeSkillIds([`${parsed.id}${parsed.version ? `@${parsed.version}` : ''}`])
-  const existing = await loadPending(cwd)
-  const next = normalizeSkillIds([...existing, ...normalized])
+  const install = requireInstallMetadata(entry)
+  const installedName = normalizeInstalledSkillName(entry.id)
+  const targetDir = path.join(projectSkillsRootPath(cwd), installedName)
+  if (await exists(targetDir)) {
+    throw new Error(`skill ${entry.id} is already installed at ${path.posix.join('.agents', 'skills', installedName)}`)
+  }
 
-  await writeJson(pendingPath(cwd), { skills: next })
-  process.stdout.write(`queued skill: ${normalized[0]}\n`)
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'skillcraft-skill-'))
+  try {
+    const sourceDir = await materializeSkillSource(entry, temp)
+    await ensureDir(projectSkillsRootPath(cwd))
+    await fs.cp(sourceDir, targetDir, { recursive: true })
+    await rewriteInstalledSkillManifest(path.join(targetDir, 'SKILL.md'), installedName)
+
+    await registerInstalledSkill(cwd, buildInstalledSkillRecord({
+      id: entry.id,
+      name: installedName,
+      install,
+      installedAt: new Date().toISOString(),
+    }))
+  } finally {
+    await fs.rm(temp, { force: true, recursive: true })
+  }
+
+  process.stdout.write(`installed skill: ${entry.id} -> ${path.posix.join('.agents', 'skills', installedName)}\n`)
 }
 
 export async function runSkillsValidate(): Promise<void> {
@@ -147,7 +187,7 @@ export async function runSkillsList(): Promise<void> {
     throw new Error('Repository is not enabled')
   }
 
-  const [proofs, pending] = await Promise.all([loadProofFromRepo(cwd), loadPending(cwd)])
+  const [proofs, pending, installed] = await Promise.all([loadProofFromRepo(cwd), loadPending(cwd), loadInstalledSkills(cwd)])
   const skills = new Set<string>()
   for (const proof of proofs) {
     for (const item of proof.skills) {
@@ -156,6 +196,9 @@ export async function runSkillsList(): Promise<void> {
   }
   for (const skill of pending) {
     skills.add(skill)
+  }
+  for (const skill of installed) {
+    skills.add(skill.id)
   }
 
   if (!skills.size) {
@@ -304,6 +347,7 @@ export async function runSkillsInspect(rawId: string, options: SkillInspectOptio
       url: match.url,
       runtime: match.runtime,
       tags: match.tags,
+      install: match.install,
       updatedAt: match.updatedAt,
       manifest,
       version: parsed.version,
@@ -355,6 +399,18 @@ function formatInspectOutput(entry: SearchIndexEntry, manifest?: SkillManifestDe
 
   if (entry.url) {
     lines.push(`url: ${entry.url}`)
+  }
+
+  if (entry.install?.type) {
+    lines.push(`install type: ${entry.install.type}`)
+  }
+
+  if (entry.install?.repo) {
+    lines.push(`install repo: ${entry.install.repo}`)
+  }
+
+  if (entry.install?.path) {
+    lines.push(`install path: ${entry.install.path}`)
   }
 
   if (manifest) {
@@ -519,13 +575,95 @@ function parseSkillManifest(input: string): { title?: string; summary?: string }
   }
 }
 
-function isJson(value: unknown): value is SearchIndexEntry[] {
-  return Array.isArray(value)
+function requireInstallMetadata(entry: SearchIndexEntry): InstalledSkillInstall {
+  const install = entry.install
+  if (!install?.type || !install.path) {
+    throw new Error(`skill ${entry.id} does not include install metadata in the search index`)
+  }
+  if (install.type === 'github-directory' && (!install.repo || !install.ref)) {
+    throw new Error(`skill ${entry.id} has incomplete github install metadata`)
+  }
+
+  return {
+    type: install.type,
+    ...(install.repo ? { repo: install.repo } : {}),
+    ...(install.ref ? { ref: install.ref } : {}),
+    path: install.path,
+  }
 }
 
-async function loadSearchIndex(): Promise<Set<string>> {
-  const entries = await loadSearchIndexEntries()
-  return new Set(entries.map((entry) => entry.id))
+async function materializeSkillSource(entry: SearchIndexEntry, tempDir: string): Promise<string> {
+  const install = requireInstallMetadata(entry)
+  if (install.type === 'local-directory') {
+    const sourceDir = resolveLocalInstallPath(install.path)
+    if (!(await exists(sourceDir))) {
+      throw new Error(`local skill source does not exist: ${sourceDir}`)
+    }
+    return sourceDir
+  }
+
+  const checkoutDir = path.join(tempDir, 'source')
+  await runGit(tempDir, ['clone', '--depth', '1', '--branch', install.ref!, `https://github.com/${install.repo}.git`, checkoutDir])
+  const sourceDir = path.join(checkoutDir, install.path)
+  if (!(await exists(sourceDir))) {
+    throw new Error(`skill source path does not exist in ${install.repo}@${install.ref}: ${install.path}`)
+  }
+  return sourceDir
+}
+
+function resolveLocalInstallPath(rawPath: string): string {
+  if (path.isAbsolute(rawPath)) {
+    return rawPath
+  }
+
+  const explicitIndexPath = process.env.SKILLCRAFT_SEARCH_INDEX_PATH?.trim()
+  if (explicitIndexPath) {
+    return path.resolve(path.dirname(explicitIndexPath), rawPath)
+  }
+
+  return path.resolve(rawPath)
+}
+
+async function rewriteInstalledSkillManifest(filePath: string, installedName: string): Promise<void> {
+  const raw = await fs.readFile(filePath, 'utf8').catch(() => {
+    throw new Error(`installed skill is missing SKILL.md: ${filePath}`)
+  })
+  const normalized = raw.replace(/\r\n/g, '\n')
+  const lines = normalized.split('\n')
+  if ((lines[0] || '').trim() !== '---') {
+    throw new Error(`skill manifest is missing YAML frontmatter: ${filePath}`)
+  }
+
+  let end = -1
+  for (let index = 1; index < lines.length; index += 1) {
+    if (lines[index].trim() === '---') {
+      end = index
+      break
+    }
+  }
+  if (end === -1) {
+    throw new Error(`skill manifest frontmatter is not closed: ${filePath}`)
+  }
+
+  let replaced = false
+  const nextFrontmatter = lines.slice(1, end).map((line) => {
+    if (/^\s*name\s*:/.test(line)) {
+      replaced = true
+      return `name: ${installedName}`
+    }
+    return line
+  })
+
+  if (!replaced) {
+    nextFrontmatter.unshift(`name: ${installedName}`)
+  }
+
+  const next = ['---', ...nextFrontmatter, '---', ...lines.slice(end + 1)].join('\n')
+  await fs.writeFile(filePath, next.endsWith('\n') ? next : `${next}\n`, 'utf8')
+}
+
+function isJson(value: unknown): value is SearchIndexEntry[] {
+  return Array.isArray(value)
 }
 
 async function loadSearchIndexEntries(outputMode: SearchIndexOptions['outputMode'] = undefined): Promise<SearchIndexEntry[]> {
@@ -601,7 +739,31 @@ function normalizeSearchIndexEntry(raw: SearchIndexEntry): SearchIndexEntry | un
     slug: normalizeText(raw.slug),
     runtime: normalizeStringArray(raw.runtime),
     tags: normalizeStringArray(raw.tags),
+    install: normalizeSearchInstall(raw.install),
     updatedAt: normalizeText(raw.updatedAt),
+  }
+}
+
+function normalizeSearchInstall(value: unknown): SearchIndexInstall | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const record = value as Record<string, unknown>
+  const type = normalizeText(record.type)
+  const installPath = normalizeText(record.path)
+  if (!type || !installPath) {
+    return undefined
+  }
+  if (type !== 'github-directory' && type !== 'local-directory') {
+    return undefined
+  }
+
+  return {
+    type,
+    repo: normalizeText(record.repo),
+    ref: normalizeText(record.ref),
+    path: installPath,
   }
 }
 
@@ -713,6 +875,15 @@ async function exists(pathToCheck: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+export async function runSkillUsed(rawId: string, repoPath = process.cwd()): Promise<void> {
+  const normalized = normalizeSkillId(assertNonEmpty(rawId, 'skill id'))
+  if (!normalized) {
+    throw new Error('invalid skill id format')
+  }
+
+  await queueSkillUsage(repoPath, normalized)
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {

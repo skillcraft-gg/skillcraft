@@ -12,13 +12,13 @@ import {
   runSkillsList,
   runSkillsPublish,
   runSkillsSearch,
+  runSkillUsed,
   runSkillsValidateAndExit,
 } from './commands/skills.js'
 import { runVerify } from './commands/verify.js'
 import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
 import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
-import { runHook } from './commands/internalHook.js'
-import { runHookPush } from './commands/internalHook.js'
+import { runAgentHook, runHook, runHookPush } from './commands/internalHook.js'
 
 const program = new Command()
 
@@ -28,12 +28,14 @@ program.option('--json', 'machine-readable JSON output')
 program
   .command('enable')
   .description('Enable Skillcraft in the current repository')
-  .action(withCommand(runEnable))
+  .option('--agent <name>', 'enable a specific agent integration (repeatable or comma-separated)', collectStrings, [])
+  .action((options) => withCommand(() => runEnable({ agents: options.agent }))())
 
 program
   .command('disable')
   .description('Disable Skillcraft in the current repository')
-  .action(withCommand(runDisable))
+  .option('--agent <name>', 'disable a specific agent integration (repeatable or comma-separated)', collectStrings, [])
+  .action((options) => withCommand(() => runDisable({ agents: options.agent }))())
 
 program
   .command('status')
@@ -167,6 +169,16 @@ program
     }
   })())
 
+program
+  .command('_agent-hook <agent> [repoPath]', { hidden: true })
+  .description('internal agent hook command')
+  .action((agent, repoPath) => withCommand(() => runAgentHook(agent, repoPath || process.cwd()))())
+
+program
+  .command('_skill-used <id> [repoPath]', { hidden: true })
+  .description('internal skill evidence command')
+  .action((id, repoPath) => withCommand(() => runSkillUsed(id, repoPath || process.cwd()))())
+
 function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | void>(fn: T): (...args: Parameters<T>) => void {
   return (...args: Parameters<T>) => {
     void Promise.resolve(fn(...args)).catch((error) => {
@@ -174,6 +186,10 @@ function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | 
       process.exitCode = 1
     })
   }
+}
+
+function collectStrings(value: string, previous: string[]): string[] {
+  return [...previous, value]
 }
 
 program.parse(process.argv)

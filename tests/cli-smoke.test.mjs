@@ -38,6 +38,20 @@ function runCli(args, cwd, env = process.env) {
   }
 }
 
+function runCliWithInput(args, cwd, input, env = process.env) {
+  const result = spawnSync('node', [cli, ...args], {
+    cwd,
+    env,
+    input,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  return {
+    code: result.status ?? 0,
+    output: `${result.stdout || ''}${result.stderr || ''}`,
+  }
+}
+
 function assertOk(t, result, expectedText) {
   assert.equal(result.code, 0, `${t.name} exited with ${result.code}\n${result.output}`)
   assert.ok(result.output.includes(expectedText), `${t.name} missing output: ${expectedText}`)
@@ -46,6 +60,21 @@ function assertOk(t, result, expectedText) {
 function makeTempDir(name) {
   const dir = join(tmpdir(), `skillcraft-${name}-`)
   return mkdtempSync(dir)
+}
+
+function makeSkillFixture(parentDir, name, description = 'Fixture skill') {
+  const skillDir = join(parentDir, name)
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(join(skillDir, 'SKILL.md'), `---
+name: ${name}
+description: ${description}
+---
+
+# ${name}
+
+Fixture instructions.
+`)
+  return skillDir
 }
 
 function setCredentialCacheTimestamp(cachePath, timestampMs) {
@@ -243,7 +272,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('doctor checks documented install prerequisites', (t) => {
     const doctorBin = makeDoctorBin(join(tempBase, 'doctor-bin-ready'), {
-      tools: ['npm', 'git', 'gh', 'opencode'],
+      tools: ['npm', 'git', 'gh', 'codex', 'opencode'],
       ghLogin: 'test-user',
     })
     const doctorEnv = { ...cliEnv, PATH: doctorBin }
@@ -256,7 +285,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assert.ok(result.output.includes('gh: ok'))
     assert.ok(result.output.includes('gh auth: ok'))
     assert.ok(result.output.includes('github user: test-user'))
+    assert.ok(result.output.includes('codex: ok'))
     assert.ok(result.output.includes('opencode: ok'))
+    assert.ok(result.output.includes('detected agents: codex, opencode'))
     assert.ok(!result.output.includes('skillcraft config:'))
     assert.ok(!result.output.includes('plugin hook:'))
   })
@@ -275,7 +306,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assert.ok(result.output.includes('gh: ok'))
     assert.ok(result.output.includes('gh auth: missing'))
     assert.ok(result.output.includes('github user: unknown'))
+    assert.ok(result.output.includes('codex: missing'))
     assert.ok(result.output.includes('opencode: missing'))
+    assert.ok(result.output.includes('detected agents: none'))
     assert.ok(!result.output.includes('skillcraft config:'))
     assert.ok(!result.output.includes('plugin hook:'))
   })
@@ -285,11 +318,14 @@ describe('Skillcraft CLI surface smoke tests', () => {
     let result = runCli(['status'], repo, cliEnv)
     assertOk(t, result, 'skillcraft: disabled')
 
-    result = runCli(['enable'], repo, cliEnv)
+    result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     assert.ok(existsSync(join(home, '.skillcraft', 'config.json')))
     assert.ok(existsSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs')))
+    const managedPlugin = readFileSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs'), 'utf8')
+    assert.ok(managedPlugin.includes("'tool.execute.after'"))
+    assert.ok(managedPlugin.includes('_skill-used'))
 
     const aiContextFile = join(repo, '.git', 'skillcraft', 'ai-model-context.json')
     assert.ok(existsSync(aiContextFile))
@@ -298,6 +334,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
     result = runCli(['status'], repo, cliEnv)
     assertOk(t, result, 'skillcraft: enabled')
+    assert.ok(result.output.includes('agents: opencode'))
 
     result = runCli(['disable'], repo, cliEnv)
     assertOk(t, result, 'disabled skillcraft')
@@ -309,10 +346,120 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assert.ok(!existsSync(aiContextFile))
   })
 
+  test('codex enable writes repo-local hook and plugin files', (t) => {
+    const repo = makeRepo(tempBase, 'flow-codex')
+    const result = runCli(['enable', '--agent', 'codex'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    assert.ok(existsSync(join(repo, '.codex', 'hooks.json')))
+    assert.ok(existsSync(join(repo, '.codex', 'config.toml')))
+    assert.ok(existsSync(join(repo, '.agents', 'plugins', 'marketplace.json')))
+    assert.ok(existsSync(join(repo, 'plugins', 'skillcraft-codex', '.codex-plugin', 'plugin.json')))
+    assert.ok(existsSync(join(repo, 'plugins', 'skillcraft-codex', 'skills', 'skillcraft', 'SKILL.md')))
+    const hooks = JSON.parse(readFileSync(join(repo, '.codex', 'hooks.json'), 'utf8'))
+    assert.ok(Array.isArray(hooks?.hooks?.Stop))
+
+    const aiContextFile = join(repo, '.git', 'skillcraft', 'ai-model-context.json')
+    const aiContext = JSON.parse(readFileSync(aiContextFile, 'utf8'))
+    assert.equal(aiContext?.agent?.provider, 'codex')
+
+    const status = runCli(['status'], repo, cliEnv)
+    assertOk(t, status, 'agents: codex')
+
+    runCli(['disable'], repo, cliEnv)
+    assert.ok(!existsSync(join(repo, '.codex', 'hooks.json')))
+  })
+
+  test('disable can remove one agent and leave the other enabled', (t) => {
+    const repo = makeRepo(tempBase, 'flow-multi-agent')
+
+    let result = runCli(['enable', '--agent', 'opencode', '--agent', 'codex'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+    assert.ok(existsSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs')))
+    assert.ok(existsSync(join(repo, '.codex', 'hooks.json')))
+
+    result = runCli(['disable', '--agent', 'codex'], repo, cliEnv)
+    assertOk(t, result, 'remaining: opencode')
+    assert.ok(existsSync(join(repo, '.opencode', 'plugins', 'skillcraft.mjs')))
+    assert.ok(!existsSync(join(repo, '.codex', 'hooks.json')))
+
+    const status = runCli(['status'], repo, cliEnv)
+    assertOk(t, status, 'agents: opencode')
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test('codex agent hook records explicit skill usage from transcript', (t) => {
+    const repo = makeRepo(tempBase, 'codex-explicit-skill')
+    try {
+      runCli(['enable', '--agent', 'codex'], repo, cliEnv)
+
+      const fixtureRoot = join(tempBase, 'codex-explicit-skill-fixtures')
+      mkdirSync(fixtureRoot, { recursive: true })
+      const alphaDir = makeSkillFixture(fixtureRoot, 'alpha')
+      writeFileSync(
+        indexFile,
+        JSON.stringify([{ id: 'acme/alpha', name: 'Alpha skill', install: { type: 'local-directory', path: alphaDir } }], null, 2),
+      )
+
+      let result = runCli(['skills', 'add', 'acme/alpha'], repo, indexedCliEnv)
+      assertOk(t, result, 'installed skill: acme/alpha')
+
+      const transcriptPath = join(repo, '.git', 'skillcraft-codex-rollout.jsonl')
+      const installedSkillPath = join(repo, '.agents', 'skills', 'acme-alpha', 'SKILL.md')
+      writeFileSync(
+        transcriptPath,
+        [
+          JSON.stringify({
+            timestamp: '2026-04-08T00:00:00.000Z',
+            type: 'turn_context',
+            payload: {
+              turn_id: 'turn-explicit',
+            },
+          }),
+          JSON.stringify({
+            timestamp: '2026-04-08T00:00:01.000Z',
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'user',
+              content: [
+                {
+                  type: 'input_text',
+                  text: `<skill>\n<name>acme-alpha</name>\n<path>${installedSkillPath}</path>\nUse the installed skill.\n</skill>`,
+                },
+              ],
+            },
+          }),
+        ].join('\n'),
+      )
+
+      result = runCliWithInput(
+        ['_agent-hook', 'codex', repo],
+        repo,
+        JSON.stringify({
+          hook_event_name: 'Stop',
+          cwd: repo,
+          model: 'gpt-5-codex',
+          transcript_path: transcriptPath,
+          turn_id: 'turn-explicit',
+          last_assistant_message: 'done',
+        }),
+        cliEnv,
+      )
+      assert.equal(result.code, 0)
+
+      const usedPending = JSON.parse(readFileSync(join(repo, '.git', 'skillcraft', 'pending.json'), 'utf8'))
+      assert.deepStrictEqual(usedPending.skills, ['acme/alpha'])
+    } finally {
+      runCli(['disable'], repo, cliEnv)
+    }
+  })
+
   test('post-commit hook resolves repo root from subdirectory', (t) => {
     const repo = makeRepo(tempBase, 'hook-root')
     try {
-      const result = runCli(['enable'], repo, cliEnv)
+      const result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
       assertOk(t, result, 'enabled skillcraft')
 
       const postCommitHook = readFileSync(join(repo, '.git', 'hooks', 'post-commit'), 'utf8')
@@ -333,7 +480,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('repositories list and prune', (t) => {
     const repo = makeRepo(tempBase, 'repos')
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     result = runCli(['repos', 'list'], repo, cliEnv)
@@ -348,7 +495,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills validate and list', (t) => {
     const repo = makeRepo(tempBase, 'skills')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     writeFileSync(join(repo, 'SKILL.md'), '# Skill\n')
     writeFileSync(join(repo, 'skill.yaml'), 'id: acme/skill\n')
@@ -365,15 +512,21 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills add supports local and external IDs', (t) => {
     const repo = makeRepo(tempBase, 'skills-add')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
+
+    const fixtureRoot = join(tempBase, 'skills-add-fixtures')
+    mkdirSync(fixtureRoot, { recursive: true })
+    const alphaDir = makeSkillFixture(fixtureRoot, 'alpha')
+    const xlsxDir = makeSkillFixture(fixtureRoot, 'xlsx')
+    const agentDir = makeSkillFixture(fixtureRoot, 'agent')
 
     writeFileSync(
       indexFile,
       JSON.stringify(
         [
-          { id: 'acme/alpha', name: 'Alpha skill' },
-          { id: 'anthropic:xlsx', name: 'XLSX' },
-          { id: 'anthropic:team/agent', name: 'Agent' },
+          { id: 'acme/alpha', name: 'Alpha skill', install: { type: 'local-directory', path: alphaDir } },
+          { id: 'anthropic:xlsx', name: 'XLSX', install: { type: 'local-directory', path: xlsxDir } },
+          { id: 'anthropic:team/agent', name: 'Agent', install: { type: 'local-directory', path: agentDir } },
         ],
         null,
         2,
@@ -381,19 +534,30 @@ describe('Skillcraft CLI surface smoke tests', () => {
     )
 
     let result = runCli(['skills', 'add', 'acme/alpha'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: acme/alpha')
+    assertOk(t, result, 'installed skill: acme/alpha')
 
     result = runCli(['skills', 'add', 'anthropic:xlsx'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: anthropic:xlsx')
+    assertOk(t, result, 'installed skill: anthropic:xlsx')
 
     result = runCli(['skills', 'add', 'anthropic:team/agent'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: anthropic:team/agent')
+    assertOk(t, result, 'installed skill: anthropic:team/agent')
 
     result = runCli(['skills', 'add', 'acme/alpha'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: acme/alpha')
+    assert.equal(result.code, 1)
+    assert.ok(result.output.includes('already installed'))
+
+    assert.ok(existsSync(join(repo, '.agents', 'skills', 'acme-alpha', 'SKILL.md')))
+    assert.ok(existsSync(join(repo, '.agents', 'skills', 'anthropic-team-agent', 'SKILL.md')))
+    assert.ok(existsSync(join(repo, '.agents', 'skills', 'anthropic-xlsx', 'SKILL.md')))
 
     const pending = JSON.parse(readFileSync(join(repo, '.git', 'skillcraft', 'pending.json'), 'utf8'))
-    assert.deepStrictEqual(pending.skills, ['acme/alpha', 'anthropic:team/agent', 'anthropic:xlsx'])
+    assert.deepStrictEqual(pending.skills, [])
+
+    result = runCli(['_skill-used', 'anthropic:xlsx'], repo, cliEnv)
+    assert.equal(result.code, 0)
+
+    const usedPending = JSON.parse(readFileSync(join(repo, '.git', 'skillcraft', 'pending.json'), 'utf8'))
+    assert.deepStrictEqual(usedPending.skills, ['anthropic:xlsx'])
 
     result = runCli(['skills', 'add', 'missing:slip'], repo, indexedCliEnv)
     assert.equal(result.code, 1)
@@ -404,7 +568,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills search lists indexed entries', (t) => {
     const repo = makeRepo(tempBase, 'skills-search')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     writeFileSync(
       indexFile,
@@ -441,7 +605,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills inspect shows manifest details', (t) => {
     const repo = makeRepo(tempBase, 'skills-inspect')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     writeFileSync(
       indexFile,
       JSON.stringify(
@@ -476,7 +640,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills inspect supports json output', (t) => {
     const repo = makeRepo(tempBase, 'skills-inspect-json')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     writeFileSync(
       indexFile,
@@ -502,7 +666,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills search supports limit', (t) => {
     const repo = makeRepo(tempBase, 'skills-search-limit')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     writeFileSync(
       indexFile,
@@ -526,7 +690,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('skills search supports json output', (t) => {
     const repo = makeRepo(tempBase, 'skills-search-json')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     writeFileSync(
       indexFile,
@@ -553,7 +717,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('loadout command and progress baseline', (t) => {
     const repo = makeRepo(tempBase, 'loadout')
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     result = runCli(['loadout', 'use', 'acme/dev'], repo, cliEnv)
@@ -590,7 +754,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
       ),
     )
 
-    const result = runCli(['enable'], repo, cliEnv)
+    const result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], credentialCliEnv)
@@ -632,7 +796,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
       USER: 'local-mac-user',
     }
 
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
@@ -684,7 +848,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
       USER: 'local-mac-user',
     }
 
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     const defaultBranch = runGit(repo, ['branch', '--show-current'])
@@ -751,7 +915,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
       ]),
     }
 
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
@@ -811,7 +975,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
       SKILLCRAFT_FAKE_GH_ISSUE_LIST_JSON: issuedIssue,
     }
 
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
@@ -968,7 +1132,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
       ),
     )
 
-    let result = runCli(['enable'], repo, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     try {
@@ -997,7 +1161,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     delete remoteCredentialEnv.SKILLCRAFT_CREDENTIAL_INDEX_PATH
 
     try {
-      runCli(['enable'], repo, cliEnv)
+      runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
       let result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repo, remoteCredentialEnv)
       assertOk(t, result, 'tracking credential: skillcraft-gg/hello-world')
@@ -1118,9 +1282,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
       ),
     )
 
-    let result = runCli(['enable'], repoA, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repoA, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
-    result = runCli(['enable'], repoB, cliEnv)
+    result = runCli(['enable', '--agent', 'opencode'], repoB, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     result = runCli(['progress', 'track', 'skillcraft-gg/hello-world'], repoA, credentialCliEnv)
@@ -1166,7 +1330,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('verify baseline path', (t) => {
     const repo = makeRepo(tempBase, 'verify')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     const result = runCli(['verify'], repo, cliEnv)
     assertOk(t, result, 'verify passed: 0 commit proofs resolved')
@@ -1177,7 +1341,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('proofs are stored on proof branch', (t) => {
     const repo = makeRepo(tempBase, 'proof-branch')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     const pending = join(repo, '.git', 'skillcraft', 'pending.json')
     writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
@@ -1224,7 +1388,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('proofs are created even when no skills are queued', (t) => {
     const repo = makeRepo(tempBase, 'proof-empty-branch')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
 
     writeFileSync(join(repo, 'proof-empty.txt'), 'change\n')
     runGit(repo, ['add', 'proof-empty.txt'])
@@ -1258,9 +1422,9 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const repoA = makeRepo(tempBase, 'progress-agg-c')
     const repoB = makeRepo(tempBase, 'progress-agg-d')
 
-    let result = runCli(['enable'], repoA, cliEnv)
+    let result = runCli(['enable', '--agent', 'opencode'], repoA, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
-    result = runCli(['enable'], repoB, cliEnv)
+    result = runCli(['enable', '--agent', 'opencode'], repoB, cliEnv)
     assertOk(t, result, 'enabled skillcraft')
 
     addTrackedProof(repoA, 'proof-a.txt', ['acme/alpha'], cliEnv)
@@ -1280,7 +1444,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
 
   test('verify reads proofs from remote branch', (t) => {
     const sourceRepo = makeRepo(tempBase, 'verify-remote-source')
-    runCli(['enable'], sourceRepo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], sourceRepo, cliEnv)
 
     const pending = join(sourceRepo, '.git', 'skillcraft', 'pending.json')
     writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
@@ -1325,7 +1489,7 @@ describe('Skillcraft CLI surface smoke tests', () => {
     const repo = makeRepo(tempBase, 'verify-unpushed-proof')
     const remote = join(tempBase, 'verify-unpushed-proof-origin.git')
 
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     mkdirSync(remote, { recursive: true })
     runGit(remote, ['init', '--bare'])
 

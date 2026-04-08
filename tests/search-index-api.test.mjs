@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -65,6 +65,26 @@ function readPendingSkills(repoDir) {
   return JSON.parse(readFileSync(pendingPath, 'utf8')).skills
 }
 
+function readInstalledSkills(repoDir) {
+  const manifestPath = join(repoDir, '.agents', 'skills', '.skillcraft-index.json')
+  return JSON.parse(readFileSync(manifestPath, 'utf8')).skills
+}
+
+function makeSkillFixture(parentDir, name, description = 'Fixture skill') {
+  const skillDir = join(parentDir, name)
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(join(skillDir, 'SKILL.md'), `---
+name: ${name}
+description: ${description}
+---
+
+# ${name}
+
+Fixture instructions.
+`)
+  return skillDir
+}
+
 describe('skill index public API behavior', () => {
   const tempBase = makeTempDir('search-index')
   const home = join(tempBase, 'home')
@@ -107,29 +127,49 @@ describe('skill index public API behavior', () => {
 
   test('skills add accepts local and external entries from index', (t) => {
     const repo = makeRepo(tempBase, 'add')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
+
+    const fixtureRoot = join(tempBase, 'fixtures-add')
+    mkdirSync(fixtureRoot, { recursive: true })
+    const alphaDir = makeSkillFixture(fixtureRoot, 'alpha')
+    const xlsxDir = makeSkillFixture(fixtureRoot, 'xlsx')
+    const agentDir = makeSkillFixture(fixtureRoot, 'agent')
 
     writeSearchIndex(indexFile, [
-      { id: 'acme/alpha', name: 'Alpha Skill' },
-      { id: 'anthropic:xlsx', name: 'Spreadsheet Toolkit' },
-      { id: 'anthropic:team/agent', name: 'Team Agent' },
+      { id: 'acme/alpha', name: 'Alpha Skill', install: { type: 'local-directory', path: alphaDir } },
+      { id: 'anthropic:xlsx', name: 'Spreadsheet Toolkit', install: { type: 'local-directory', path: xlsxDir } },
+      { id: 'anthropic:team/agent', name: 'Team Agent', install: { type: 'local-directory', path: agentDir } },
     ])
 
     let result = runCli(['skills', 'add', 'acme/alpha'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: acme/alpha')
+    assertOk(t, result, 'installed skill: acme/alpha')
 
     result = runCli(['skills', 'add', 'anthropic:team/agent'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: anthropic:team/agent')
+    assertOk(t, result, 'installed skill: anthropic:team/agent')
 
     result = runCli(['skills', 'add', 'anthropic:xlsx'], repo, indexedCliEnv)
-    assertOk(t, result, 'queued skill: anthropic:xlsx')
+    assertOk(t, result, 'installed skill: anthropic:xlsx')
+
+    assert.equal(existsSync(join(repo, '.agents', 'skills', 'acme-alpha', 'SKILL.md')), true)
+    assert.equal(existsSync(join(repo, '.agents', 'skills', 'anthropic-team-agent', 'SKILL.md')), true)
+    assert.equal(existsSync(join(repo, '.agents', 'skills', 'anthropic-xlsx', 'SKILL.md')), true)
+
+    const installed = readInstalledSkills(repo)
+    assert.deepStrictEqual(installed.map((entry) => entry.id), ['acme/alpha', 'anthropic:team/agent', 'anthropic:xlsx'])
+    assert.deepStrictEqual(installed.map((entry) => entry.name), ['acme-alpha', 'anthropic-team-agent', 'anthropic-xlsx'])
 
     result = runCli(['skills', 'add', 'missing:skill'], repo, indexedCliEnv)
     assert.equal(result.code, 1)
     assert.ok(result.output.includes('is not listed in the search index'))
 
     const pending = readPendingSkills(repo)
-    assert.deepStrictEqual(pending, ['acme/alpha', 'anthropic:team/agent', 'anthropic:xlsx'])
+    assert.deepStrictEqual(pending, [])
+
+    result = runCli(['_skill-used', 'anthropic:xlsx'], repo, cliEnv)
+    assert.equal(result.code, 0)
+
+    const usedPending = readPendingSkills(repo)
+    assert.deepStrictEqual(usedPending, ['anthropic:xlsx'])
 
     runCli(['disable'], repo, cliEnv)
   })
@@ -144,6 +184,7 @@ describe('skill index public API behavior', () => {
         slug: 'agent',
         runtime: ['python'],
         tags: ['automation'],
+        install: { type: 'github-directory', repo: 'anthropics/skills', ref: 'main', path: 'skills/team/agent' },
         updatedAt: '2026-03-17T12:00:00.000Z',
       },
     ])
@@ -158,11 +199,12 @@ describe('skill index public API behavior', () => {
     assert.deepStrictEqual(payload.tags, ['automation'])
     assert.equal(payload.owner, 'team')
     assert.equal(payload.slug, 'agent')
+    assert.equal(payload.install.type, 'github-directory')
   })
 
   test('invalid index rows are ignored by normalization', (t) => {
     const repo = makeRepo(tempBase, 'normalize')
-    runCli(['enable'], repo, cliEnv)
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
     writeSearchIndex(indexFile, [
       { id: 'acme/valid', name: 'Valid Skill' },
       { id: 'bad', name: 'Bad Skill' },

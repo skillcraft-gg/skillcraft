@@ -44,3 +44,11 @@ export async function removeFile(filePath: string): Promise<void> {
     // best effort cleanup
   }
 }
+
+export async function removePath(targetPath: string): Promise<void> {
+  try {
+    await fs.rm(targetPath, { force: true, recursive: true })
+  } catch {
+    // best effort cleanup
+  }
+}
