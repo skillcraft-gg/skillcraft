@@ -344,7 +344,7 @@ export async function writeProof(repoPath: string, proof: Proof): Promise<string
     await git(
       ['commit', '--no-gpg-sign', '-m', `add Skillcraft proof ${proofId}`],
       worktree,
-      { env: { ...process.env, SKILLCRAFT_HOOK_DISABLED: '1' } },
+      { env: { ...process.env, SKILLCRAFT_HOOK_DISABLED: '1' }, disableHooks: true },
     )
   })
 
@@ -359,7 +359,10 @@ export async function pushProofBranch(repoPath: string, remoteName = 'origin'): 
   }
 
   try {
-    await git(['push', remoteName, `${branch}:${branch}`], repoPath, { env: { ...process.env, SKILLCRAFT_HOOK_DISABLED: '1' } })
+    await git(['push', remoteName, `${branch}:${branch}`], repoPath, {
+      env: { ...process.env, SKILLCRAFT_HOOK_DISABLED: '1' },
+      disableHooks: true,
+    })
   } catch {
     return
   }

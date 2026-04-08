@@ -6,11 +6,16 @@ const execFile = promisify(execFileCb)
 
 type GitOptions = {
   env?: NodeJS.ProcessEnv
+  disableHooks?: boolean
+}
+
+function withGitConfigArgs(args: readonly string[], options: GitOptions): string[] {
+  return options.disableHooks ? ['-c', 'core.hooksPath=/dev/null', ...args] : [...args]
 }
 
 export async function git(args: readonly string[], cwd: string, options: GitOptions = {}): Promise<string> {
   try {
-    const { stdout } = await execFile('git', args, {
+    const { stdout } = await execFile('git', withGitConfigArgs(args, options), {
       cwd,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
@@ -25,7 +30,7 @@ export async function git(args: readonly string[], cwd: string, options: GitOpti
 
 async function gitWithInput(args: readonly string[], cwd: string, input: string, options: GitOptions = {}): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
+    const child = spawn('git', withGitConfigArgs(args, options), {
       cwd,
       env: options.env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -163,7 +168,7 @@ export async function amendCommitMessage(cwd: string, message: string): Promise<
   const tempFile = path.join(cwd, '.git', 'SKILLCRAFT_COMMIT_MESSAGE')
   const { writeFile } = await import('node:fs/promises')
   await writeFile(tempFile, `${message}\n`, 'utf8')
-  await execFile('git', ['commit', '--amend', '--file', tempFile, '--no-gpg-sign'], {
+  await execFile('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '--amend', '--file', tempFile, '--no-gpg-sign'], {
     cwd,
     encoding: 'utf8',
     env,

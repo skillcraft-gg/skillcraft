@@ -1491,6 +1491,48 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('internal proof commits bypass repo commit-msg hooks', (t) => {
+    const repo = makeRepo(tempBase, 'proof-branch-commit-msg-hook')
+    runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
+
+    const pending = join(repo, '.git', 'skillcraft', 'pending.json')
+    writeFileSync(pending, JSON.stringify({ skills: ['acme/alpha'] }))
+    writeFileSync(
+      join(repo, '.git', 'skillcraft', 'ai-model-context.json'),
+      JSON.stringify({
+        agent: { provider: 'opencode' },
+        model: { provider: 'openai', name: 'gpt-4o' },
+      }),
+    )
+    writeFileSync(join(repo, 'proof-hook.txt'), 'change\n')
+    runGit(repo, ['add', 'proof-hook.txt'])
+    runGit(repo, ['commit', '-m', 'feat: add proof hook file'], { ...cliEnv, SKILLCRAFT_HOOK_DISABLED: '1' })
+
+    const hookLog = join(repo, '.git', 'commit-msg-hook.log')
+    writeExecutable(join(repo, '.git', 'hooks', 'commit-msg'), [
+      '#!/bin/sh',
+      'message_file="$1"',
+      'subject="$(head -n 1 "$message_file")"',
+      `printf '%s\\n' "$subject" >> ${JSON.stringify(hookLog)}`,
+      'case "$subject" in',
+      '  add\ Skillcraft\ proof\ *)',
+      '    printf "%s\\n" "proof commits should bypass commit-msg hooks" >&2',
+      '    exit 1',
+      '    ;;',
+      'esac',
+    ])
+
+    const hookResult = runCli(['_hook', 'post-commit', repo], repo, cliEnv)
+    assertOk(t, hookResult, '')
+
+    const headMessage = runGit(repo, ['log', '-n', '1', '--pretty=%B'])
+    const match = headMessage.match(/Skillcraft-Ref:\s*(\S+)/)
+    assert.ok(match)
+    assert.equal(existsSync(hookLog), false)
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
   test('proofs are created even when no skills are queued', (t) => {
     const repo = makeRepo(tempBase, 'proof-empty-branch')
     runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
