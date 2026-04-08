@@ -407,6 +407,74 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('enable preserves repo-local hooksPath hooks and records evidence', (t) => {
+    const repo = makeRepo(tempBase, 'flow-husky')
+    const hooksDir = join(repo, '.husky')
+    const hookLog = join(repo, '.git', 'existing-hook.log')
+    mkdirSync(hooksDir, { recursive: true })
+    runGit(repo, ['config', 'core.hooksPath', '.husky'])
+    writeExecutable(join(hooksDir, 'post-commit'), [
+      '#!/bin/sh',
+      `printf '%s\\n' post-commit >> ${JSON.stringify(hookLog)}`,
+    ])
+    writeExecutable(join(hooksDir, 'pre-push'), [
+      '#!/bin/sh',
+      `printf '%s\\n' pre-push >> ${JSON.stringify(hookLog)}`,
+    ])
+
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+    assert.ok(existsSync(join(hooksDir, 'post-commit.skillcraft.orig')))
+    assert.ok(existsSync(join(hooksDir, 'pre-push.skillcraft.orig')))
+
+    result = runCli(['status'], repo, cliEnv)
+    assertOk(t, result, 'post-commit hook: installed')
+
+    writeFileSync(join(repo, '.git', 'skillcraft', 'pending.json'), JSON.stringify({ skills: ['acme/alpha'] }))
+    writeFileSync(
+      join(repo, '.git', 'skillcraft', 'ai-model-context.json'),
+      JSON.stringify({
+        agent: { provider: 'opencode' },
+        model: { provider: 'openai', name: 'gpt-4o' },
+      }),
+    )
+    writeFileSync(join(repo, 'proof.txt'), 'change\n')
+    runGit(repo, ['add', 'proof.txt'])
+    runGit(repo, ['commit', '-m', 'add proof file'])
+
+    const hookLogText = readFileSync(hookLog, 'utf8')
+    assert.ok(hookLogText.includes('post-commit'))
+    const headMessage = runGit(repo, ['log', '-n', '1', '--pretty=%B'])
+    const match = headMessage.match(/Skillcraft-Ref:\s*(\S+)/)
+    assert.ok(match)
+
+    const remote = join(tempBase, 'flow-husky-origin.git')
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+    runGit(repo, ['remote', 'add', 'origin', remote])
+    runGit(repo, ['push', 'origin', 'HEAD'])
+    const pushedHookLogText = readFileSync(hookLog, 'utf8')
+    assert.ok(pushedHookLogText.includes('pre-push'))
+    const remoteProofBranch = runGit(repo, ['ls-remote', '--heads', 'origin', 'skillcraft/proofs/v1'])
+    assert.ok(remoteProofBranch.includes('refs/heads/skillcraft/proofs/v1'))
+
+    result = runCli(['disable'], repo, cliEnv)
+    assertOk(t, result, 'disabled skillcraft')
+    assert.ok(readFileSync(join(hooksDir, 'post-commit'), 'utf8').includes('post-commit'))
+    assert.ok(readFileSync(join(hooksDir, 'pre-push'), 'utf8').includes('pre-push'))
+    assert.ok(!existsSync(join(hooksDir, 'post-commit.skillcraft.orig')))
+    assert.ok(!existsSync(join(hooksDir, 'pre-push.skillcraft.orig')))
+  })
+
+  test('enable fails when git hooks are disabled', (t) => {
+    const repo = makeRepo(tempBase, 'flow-hooks-disabled')
+    runGit(repo, ['config', 'core.hooksPath', '/dev/null'])
+
+    const result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
+    assert.notEqual(result.code, 0, `${t.name} unexpectedly succeeded`)
+    assert.ok(result.output.includes('Git hooks are disabled for this repository'))
+  })
+
   test('codex agent hook records explicit skill usage from transcript', (t) => {
     const repo = makeRepo(tempBase, 'codex-explicit-skill')
     try {

@@ -2,7 +2,8 @@ import { detectAvailableAgents, loadEnabledAgents } from '@/core/agents'
 import { loadLocalConfig } from '@/core/config'
 import { fileExists } from '@/core/fs'
 import { gitHasRef, gitHeadCommit, gitLogWithMessages, gitRoot, isGitRepo } from '@/core/git'
-import { contextPath, localRepoHookPath } from '@/core/paths'
+import { hasInstalledPostCommitHook } from '@/core/hooks'
+import { contextPath } from '@/core/paths'
 import { currentProofIdForCommit, loadPending } from '@/core/proof'
 import { isEnabled } from '@/core/state'
 import { getProvider } from '@/providers'
@@ -25,7 +26,7 @@ export async function runStatus(): Promise<void> {
   process.stdout.write(`pending skills: ${pending.length}\n`)
   process.stdout.write(`agents: ${agents.length ? agents.join(', ') : 'none'}\n`)
   const contextExists = await fileExists(contextPath(repoPath))
-  const hasHook = await fileExists(localRepoHookPath(repoPath))
+  const hasHook = await hasInstalledPostCommitHook(repoPath)
   process.stdout.write(`context file: ${contextExists ? 'present' : 'missing'}\n`)
   process.stdout.write(`post-commit hook: ${hasHook ? 'installed' : 'missing'}\n`)
 

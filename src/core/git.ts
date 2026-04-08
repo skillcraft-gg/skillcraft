@@ -84,6 +84,10 @@ export async function gitRemote(cwd: string, remote = 'origin'): Promise<string 
   }
 }
 
+export async function gitHooksPath(cwd: string): Promise<string> {
+  return git(['rev-parse', '--git-path', 'hooks'], cwd)
+}
+
 export async function gitCommitMessage(cwd: string, commit = 'HEAD'): Promise<string> {
   return git(['log', '--format=%B', '-n', '1', commit], cwd)
 }
