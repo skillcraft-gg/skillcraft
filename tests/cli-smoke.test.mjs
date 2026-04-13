@@ -561,6 +561,23 @@ describe('Skillcraft CLI surface smoke tests', () => {
     runCli(['disable'], repo, cliEnv)
   })
 
+  test('status handles an enabled empty repo without a head commit', (t) => {
+    const repo = makeEmptyRepo(tempBase, 'status-empty-repo')
+
+    try {
+      let result = runCli(['enable', '--agent', 'codex'], repo, cliEnv)
+      assertOk(t, result, 'enabled skillcraft')
+
+      result = runCli(['status'], repo, cliEnv)
+      assertOk(t, result, 'head: none')
+      assert.ok(result.output.includes('latest proof: none'))
+      assert.ok(result.output.includes('recent commits with evidence: 0'))
+      assert.ok(result.output.includes('proof branch: present'))
+    } finally {
+      runCli(['disable'], repo, cliEnv)
+    }
+  })
+
   test('post-commit hook resolves repo root from subdirectory', (t) => {
     const repo = makeRepo(tempBase, 'hook-root')
     try {

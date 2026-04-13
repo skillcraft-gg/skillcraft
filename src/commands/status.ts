@@ -1,7 +1,7 @@
 import { detectAvailableAgents, loadEnabledAgents } from '@/core/agents'
 import { loadLocalConfig } from '@/core/config'
 import { fileExists } from '@/core/fs'
-import { gitHasRef, gitHeadCommit, gitLogWithMessages, gitRoot, isGitRepo } from '@/core/git'
+import { gitHasHeadCommit, gitHasRef, gitHeadCommit, gitLogWithMessages, gitRoot, isGitRepo } from '@/core/git'
 import { hasInstalledPostCommitHook } from '@/core/hooks'
 import { contextPath } from '@/core/paths'
 import { currentProofIdForCommit, loadPending } from '@/core/proof'
@@ -30,6 +30,22 @@ export async function runStatus(): Promise<void> {
   process.stdout.write(`context file: ${contextExists ? 'present' : 'missing'}\n`)
   process.stdout.write(`post-commit hook: ${hasHook ? 'installed' : 'missing'}\n`)
 
+  const config = await loadLocalConfig(repoPath)
+  const branch = config.proofRef?.replace(/^refs\/heads\//, '') || 'skillcraft/proofs/v1'
+  const proofBranchExists = await gitHasRef(repoPath, `refs/heads/${branch}`)
+
+  if (!(await gitHasHeadCommit(repoPath))) {
+    process.stdout.write('head: none\n')
+    process.stdout.write('latest proof: none\n')
+    process.stdout.write('recent commits with evidence: 0\n')
+    process.stdout.write(`proof branch: ${proofBranchExists ? 'present' : 'missing'}\n`)
+
+    if (pending.length > 0) {
+      process.stdout.write(`pending evidence queued: ${pending.join(', ')}\n`)
+    }
+    return
+  }
+
   const head = await gitHeadCommit(repoPath)
   const proofId = await currentProofIdForCommit(repoPath, head)
   process.stdout.write(`head: ${head}\n`)
@@ -39,9 +55,6 @@ export async function runStatus(): Promise<void> {
   const withSkillcraft = logs.filter((entry) => entry.message.includes('Skillcraft-Ref:'))
   process.stdout.write(`recent commits with evidence: ${withSkillcraft.length}\n`)
 
-  const config = await loadLocalConfig(repoPath)
-  const branch = config.proofRef?.replace(/^refs\/heads\//, '') || 'skillcraft/proofs/v1'
-  const proofBranchExists = await gitHasRef(repoPath, `refs/heads/${branch}`)
   process.stdout.write(`proof branch: ${proofBranchExists ? 'present' : 'missing'}\n`)
 
   if (pending.length > 0) {

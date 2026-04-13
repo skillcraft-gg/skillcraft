@@ -101,6 +101,15 @@ export async function gitHeadCommit(cwd: string): Promise<string> {
   return (await git(['rev-parse', 'HEAD'], cwd)).trim()
 }
 
+export async function gitHasHeadCommit(cwd: string): Promise<boolean> {
+  try {
+    await git(['rev-parse', '--verify', 'HEAD^{commit}'], cwd)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function gitHasRef(cwd: string, ref: string): Promise<boolean> {
   try {
     await git(['show-ref', '--verify', '--quiet', ref], cwd)
