@@ -5,9 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+  issues:
+    types: [opened, edited, labeled, unlabeled, reopened, closed]
 
 permissions:
   contents: read
+  issues: read
   pages: write
   id-token: write
 
@@ -17,6 +20,11 @@ concurrency:
 
 jobs:
   build:
+    if: >
+      github.event_name != 'issues' ||
+      (github.event.action == 'labeled' && contains(fromJSON('["roadmap:now","roadmap:next","roadmap:later","roadmap:released"]'), github.event.label.name)) ||
+      (github.event.action == 'unlabeled' && contains(fromJSON('["roadmap:now","roadmap:next","roadmap:later","roadmap:released"]'), github.event.label.name)) ||
+      (contains(fromJSON('["opened","edited","reopened","closed"]'), github.event.action) && (contains(github.event.issue.labels.*.name, 'roadmap:now') || contains(github.event.issue.labels.*.name, 'roadmap:next') || contains(github.event.issue.labels.*.name, 'roadmap:later') || contains(github.event.issue.labels.*.name, 'roadmap:released')))
     runs-on: ubuntu-latest
 
     steps:
@@ -32,6 +40,11 @@ jobs:
 
       - name: Build changelog
         uses: skillcraft-gg/docs/.github/actions/build-changelog@main
+
+      - name: Build roadmap
+        uses: skillcraft-gg/docs/.github/actions/build-roadmap@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare Pages artifact
         uses: skillcraft-gg/docs/.github/actions/prepare-repo-pages@main
