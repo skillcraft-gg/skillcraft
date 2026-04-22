@@ -70,6 +70,14 @@ export function opencodePluginPath(repoPath: string): string {
   return path.join(repoPath, '.opencode', 'plugins', 'skillcraft.mjs')
 }
 
+export function opencodeSkillsRootPath(repoPath: string): string {
+  return path.join(repoPath, '.opencode', 'skills')
+}
+
+export function opencodeSkillPath(repoPath: string, name: string): string {
+  return path.join(opencodeSkillsRootPath(repoPath), name, 'SKILL.md')
+}
+
 export function codexConfigPath(repoPath: string): string {
   return path.join(repoPath, '.codex', 'config.toml')
 }
@@ -104,6 +112,10 @@ export function installedSkillsIndexPath(repoPath: string): string {
 
 export function aiModelContextPath(repoPath: string): string {
   return path.join(localGitDir(repoPath), 'ai-model-context.json')
+}
+
+export function learnModeStatePath(repoPath: string): string {
+  return path.join(localGitDir(repoPath), 'learn-mode.json')
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

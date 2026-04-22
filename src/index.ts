@@ -19,6 +19,7 @@ import { runVerify } from './commands/verify.js'
 import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
 import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
 import { runAgentHook, runHook, runHookPush } from './commands/internalHook.js'
+import { runLearn } from './commands/learn.js'
 
 const program = new Command()
 
@@ -46,6 +47,12 @@ program
   .command('doctor')
   .description('Check environment and integration readiness')
   .action(withCommand(runDoctor))
+
+program
+  .command('learn')
+  .description('Launch Skillcraft Learn Mode')
+  .option('--agent <name>', 'use a specific learn-mode agent (currently opencode only)', collectStrings, [])
+  .action((options) => withCommand(() => runLearn({ agents: options.agent }))())
 
 const reposCommand = program.command('repos').description('Manage tracked repositories')
 reposCommand.command('list').description('List tracked repositories').action(withCommand(runReposList))

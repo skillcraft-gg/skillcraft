@@ -11,6 +11,8 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const repoRoot = join(__dirname, '..')
 const cli = join(repoRoot, 'dist', 'index.js')
+const gitBinary = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+const grepBinary = execFileSync('which', ['grep'], { encoding: 'utf8' }).trim()
 
 if (!existsSync(cli)) {
   throw new Error('Built CLI not found. Run `npm run build` before `npm test`.')
@@ -203,6 +205,71 @@ function makeDoctorBin(binDir, options = {}) {
     }
 
     writeExecutable(join(binDir, tool), [
+      '#!/bin/sh',
+      'exit 0',
+    ])
+  }
+
+  return binDir
+}
+
+function makeLearnModeBin(binDir, options = {}) {
+  mkdirSync(binDir, { recursive: true })
+
+  writeExecutable(join(binDir, 'node'), [
+    '#!/bin/sh',
+    `exec "${process.execPath}" "$@"`,
+  ])
+
+  writeExecutable(join(binDir, 'git'), [
+    '#!/bin/sh',
+    `exec "${gitBinary}" "$@"`,
+  ])
+
+  writeExecutable(join(binDir, 'grep'), [
+    '#!/bin/sh',
+    `exec "${grepBinary}" "$@"`,
+  ])
+
+  if (options.opencode !== false) {
+    writeExecutable(join(binDir, 'opencode'), [
+      '#!/bin/sh',
+      'repo="${1:-$PWD}"',
+      'if [ ! -f "$repo/AGENTS.md" ]; then',
+      '  echo "missing AGENTS.md" >&2',
+      '  exit 1',
+      'fi',
+      'if [ ! -f "$repo/.opencode/skills/learning-coach/SKILL.md" ]; then',
+      '  echo "missing learn skill" >&2',
+      '  exit 1',
+      'fi',
+      'grep -q "learning-coach" "$repo/AGENTS.md" || { echo "missing learn mode block" >&2; exit 1; }',
+      'if [ -z "$SKILLCRAFT_FAKE_OPENCODE_SKIP_ENABLE_HINT" ]; then',
+      '  grep -q "skillcraft enable --agent opencode" "$repo/AGENTS.md" || { echo "missing enable hint" >&2; exit 1; }',
+      'fi',
+      'if [ -n "$SKILLCRAFT_FAKE_OPENCODE_EXPECT_GITIGNORE" ]; then',
+      '  if [ ! -f "$repo/.gitignore" ]; then',
+      '    echo "missing .gitignore" >&2',
+      '    exit 1',
+      '  fi',
+      '  grep -qx ".opencode/skills/learning-coach/" "$repo/.gitignore" || { echo "missing learn skill ignore" >&2; exit 1; }',
+      'fi',
+      'if [ -n "$SKILLCRAFT_FAKE_OPENCODE_EXPECT_AGENTS_IGNORE" ]; then',
+      '  grep -qx "AGENTS.md" "$repo/.gitignore" || { echo "missing AGENTS ignore" >&2; exit 1; }',
+      'fi',
+      'if [ -n "$SKILLCRAFT_FAKE_OPENCODE_EXPECT_NO_AGENTS_IGNORE" ] && [ -f "$repo/.gitignore" ]; then',
+      '  if grep -qx "AGENTS.md" "$repo/.gitignore"; then',
+      '    echo "unexpected AGENTS ignore" >&2',
+      '    exit 1',
+      '  fi',
+      'fi',
+      'echo "fake opencode ok"',
+      'exit 0',
+    ])
+  }
+
+  if (options.codex) {
+    writeExecutable(join(binDir, 'codex'), [
       '#!/bin/sh',
       'exit 0',
     ])
@@ -405,6 +472,99 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assertOk(t, status, 'agents: opencode')
 
     runCli(['disable'], repo, cliEnv)
+  })
+
+  test('learn launches temporary OpenCode learn mode and cleans up after exit', (t) => {
+    const repo = makeRepo(tempBase, 'learn-standalone')
+    const learnBin = makeLearnModeBin(join(tempBase, 'learn-bin-standalone'))
+    const learnEnv = {
+      ...cliEnv,
+      PATH: learnBin,
+      SKILLCRAFT_FAKE_OPENCODE_EXPECT_GITIGNORE: '1',
+      SKILLCRAFT_FAKE_OPENCODE_EXPECT_AGENTS_IGNORE: '1',
+    }
+
+    const result = runCli(['learn', '--agent', 'opencode'], repo, learnEnv)
+    assertOk(t, result, 'fake opencode ok')
+    assert.ok(result.output.includes('Skillcraft Learn Mode disabled. Run `skillcraft learn` to start another guided session.'))
+
+    assert.ok(!existsSync(join(repo, '.gitignore')))
+    assert.ok(!existsSync(join(repo, 'AGENTS.md')))
+    assert.ok(!existsSync(join(repo, '.opencode', 'skills', 'learning-coach', 'SKILL.md')))
+    assert.ok(!existsSync(join(repo, '.git', 'skillcraft', 'learn-mode.json')))
+  })
+
+  test('learn preserves existing AGENTS.md content and clears stale learn state', (t) => {
+    const repo = makeRepo(tempBase, 'learn-stale-state')
+    const learnBin = makeLearnModeBin(join(tempBase, 'learn-bin-stale'))
+    const learnEnv = {
+      ...cliEnv,
+      PATH: learnBin,
+      SKILLCRAFT_FAKE_OPENCODE_EXPECT_GITIGNORE: '1',
+      SKILLCRAFT_FAKE_OPENCODE_EXPECT_NO_AGENTS_IGNORE: '1',
+    }
+    const agentsPath = join(repo, 'AGENTS.md')
+    const gitignorePath = join(repo, '.gitignore')
+    const skillDir = join(repo, '.opencode', 'skills', 'learning-coach')
+    const originalAgents = '# Existing Rules\n\nKeep answers short.\n'
+    const originalGitignore = '# existing ignores\n*.tmp\n'
+
+    writeFileSync(agentsPath, originalAgents)
+    writeFileSync(gitignorePath, originalGitignore)
+    runGit(repo, ['add', 'AGENTS.md', '.gitignore'])
+    runGit(repo, ['commit', '-m', 'add project rules'])
+
+    writeFileSync(
+      agentsPath,
+      `${originalAgents}\n<!-- skillcraft:begin learn -->\nold learn block\n<!-- skillcraft:end learn -->\n`,
+    )
+    mkdirSync(join(repo, '.git', 'skillcraft'), { recursive: true })
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(join(skillDir, 'SKILL.md'), 'stale skill\n')
+    writeFileSync(
+      join(repo, '.git', 'skillcraft', 'learn-mode.json'),
+      JSON.stringify({
+        version: 1,
+        agentsPath,
+        createdAgentsFile: false,
+        skillDir,
+      }),
+    )
+
+    const result = runCli(['learn', '--agent', 'opencode'], repo, learnEnv)
+    assertOk(t, result, 'fake opencode ok')
+    assert.ok(result.output.includes('Skillcraft Learn Mode disabled. Run `skillcraft learn` to start another guided session.'))
+
+    assert.equal(readFileSync(agentsPath, 'utf8'), originalAgents)
+    assert.equal(readFileSync(gitignorePath, 'utf8'), originalGitignore)
+    assert.ok(!existsSync(join(repo, '.opencode', 'skills', 'learning-coach', 'SKILL.md')))
+    assert.ok(!existsSync(join(repo, '.git', 'skillcraft', 'learn-mode.json')))
+  })
+
+  test('learn prompts when multiple agents are installed and codex stays disabled', (t) => {
+    const repo = makeRepo(tempBase, 'learn-multi-agent')
+    const learnBin = makeLearnModeBin(join(tempBase, 'learn-bin-multi'), { codex: true })
+    const learnEnv = {
+      ...cliEnv,
+      PATH: learnBin,
+      SKILLCRAFT_FORCE_TTY: '1',
+    }
+
+    const result = runCliWithInput(['learn'], repo, '2\n', learnEnv)
+    assert.notEqual(result.code, 0, `${t.name} unexpectedly succeeded`)
+    assert.ok(result.output.includes('Select a learn-mode agent:'))
+    assert.ok(result.output.includes('2. codex (coming soon)'))
+    assert.ok(result.output.includes('Learn Mode for codex is not available yet.'))
+  })
+
+  test('learn fails clearly when only codex is installed', (t) => {
+    const repo = makeRepo(tempBase, 'learn-codex-only')
+    const learnBin = makeLearnModeBin(join(tempBase, 'learn-bin-codex-only'), { opencode: false, codex: true })
+    const learnEnv = { ...cliEnv, PATH: learnBin }
+
+    const result = runCli(['learn'], repo, learnEnv)
+    assert.notEqual(result.code, 0, `${t.name} unexpectedly succeeded`)
+    assert.ok(result.output.includes('Learn Mode for codex is not available yet.'))
   })
 
   test('enable preserves repo-local hooksPath hooks and records evidence', (t) => {
