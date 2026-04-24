@@ -186,9 +186,9 @@ program
   .description('internal skill evidence command')
   .action((id, repoPath) => withCommand(() => runSkillUsed(id, repoPath || process.cwd()))())
 
-function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | void>(fn: T): (...args: Parameters<T>) => void {
-  return (...args: Parameters<T>) => {
-    void Promise.resolve(fn(...args)).catch((error) => {
+function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | void>(fn: T): (...args: Parameters<T>) => Promise<void> {
+  return async (...args: Parameters<T>) => {
+    await Promise.resolve(fn(...args)).catch((error) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       process.exitCode = 1
     })
@@ -199,4 +199,4 @@ function collectStrings(value: string, previous: string[]): string[] {
   return [...previous, value]
 }
 
-program.parse(process.argv)
+await program.parseAsync(process.argv)

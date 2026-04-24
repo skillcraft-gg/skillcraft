@@ -23,6 +23,8 @@ export type PublishInputs = {
 export interface ForgeProvider {
   providerName(): string
   getUser(): Promise<string>
+  viewerHasStarredRepo(repo: string): Promise<boolean>
+  starRepo(repo: string): Promise<void>
   getIssueUrl(repo: string, number: number): Promise<string>
   createIssue(repo: string, title: string, body: string): Promise<number>
   createPullRequest(repo: string, branch: string, title: string): Promise<number>
@@ -106,6 +108,16 @@ export class GitHubProvider implements ForgeProvider {
 
   async getUser(): Promise<string> {
     return await runGh(['api', 'user', '--jq', '.login'])
+  }
+
+  async viewerHasStarredRepo(repo: string): Promise<boolean> {
+    const raw = await runGh(['repo', 'view', repo, '--json', 'viewerHasStarred'])
+    const parsed = JSON.parse(raw) as { viewerHasStarred?: boolean }
+    return parsed.viewerHasStarred === true
+  }
+
+  async starRepo(repo: string): Promise<void> {
+    await runGh(['api', '-X', 'PUT', `user/starred/${repo}`])
   }
 
   async getIssueUrl(repo: string, number: number): Promise<string> {

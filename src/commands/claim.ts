@@ -7,6 +7,7 @@ import { getProvider } from '@/providers'
 import { loadGlobalConfig } from '@/core/config'
 import { gitIsAncestor, gitRemote } from '@/core/git'
 import { findUnpushedCommits } from '@/core/remote'
+import { maybePromptToStarSkillcraft } from '@/lib/starPrompt'
 
 export async function runClaimList(): Promise<void> {
   const config = await loadGlobalConfig()
@@ -157,6 +158,7 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
   const issue = await provider.createIssue('skillcraft-gg/credential-ledger', `claim: ${credential}`, yamlPayload)
   process.stdout.write(`opened claim: #${issue}\n`)
   process.stdout.write(`payload:\n${yamlPayload}\n`)
+  await maybePromptToStarSkillcraft()
 }
 
 async function resolveClaimant(provider: ReturnType<typeof getProvider>, configuredUser?: string): Promise<string> {

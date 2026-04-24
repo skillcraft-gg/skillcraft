@@ -49,9 +49,14 @@ export const InstalledSkillsFileSchema = z.object({
   skills: z.array(InstalledSkillRecordSchema).default([]),
 })
 
+export const PromptPreferencesSchema = z.object({
+  starSkillcraftDisabled: z.boolean().default(false),
+})
+
 export const ConfigSchema = z.object({
   githubUser: z.string().optional(),
   provider: z.enum(['gh']).default('gh'),
+  prompts: PromptPreferencesSchema.default({}),
   version: z.number().int().default(1),
   proofRef: z.string().default(DefaultProofRef),
 })

@@ -321,6 +321,16 @@ function makeFakeGhScript(binDir) {
       '  echo "test-user"',
       '  exit 0',
       'fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "view" ]; then',
+      '  printf "{\"viewerHasStarred\":%s}" "${SKILLCRAFT_FAKE_GH_VIEWER_HAS_STARRED:-true}"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "api" ] && [ "$2" = "-X" ] && [ "$3" = "PUT" ] && [ "$4" = "user/starred/skillcraft-gg/skillcraft" ]; then',
+      '  if [ -n "$SKILLCRAFT_FAKE_GH_STAR_FILE" ]; then',
+      '    printf "%s" starred > "$SKILLCRAFT_FAKE_GH_STAR_FILE"',
+      '  fi',
+      '  exit 0',
+      'fi',
       'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then',
       "  echo '{\"user\": {\"login\": \"test-user\"}}'",
       '  exit 0',
@@ -492,6 +502,53 @@ describe('Skillcraft CLI surface smoke tests', () => {
     assert.ok(!existsSync(join(repo, 'AGENTS.md')))
     assert.ok(!existsSync(join(repo, '.opencode', 'skills', 'learning-coach', 'SKILL.md')))
     assert.ok(!existsSync(join(repo, '.git', 'skillcraft', 'learn-mode.json')))
+  })
+
+  test.skip('learn can prompt to star Skillcraft and default to yes', (t) => {
+    const repo = makeRepo(tempBase, 'learn-star')
+    const learnBin = makeLearnModeBin(join(tempBase, 'learn-bin-star'))
+    makeFakeGhScript(learnBin)
+    const promptHome = join(tempBase, 'home-learn-star')
+    const starFile = join(tempBase, 'learn-starred.txt')
+    mkdirSync(promptHome, { recursive: true })
+    const learnEnv = {
+      ...cliEnv,
+      HOME: promptHome,
+      PATH: `${learnBin}:${process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_VIEWER_HAS_STARRED: 'false',
+      SKILLCRAFT_FAKE_GH_STAR_FILE: starFile,
+      SKILLCRAFT_STAR_PROMPT_RESPONSE: 'yes',
+    }
+
+    const result = runCli(['learn', '--agent', 'opencode'], repo, learnEnv)
+    assert.equal(result.code, 0, `${t.name} exited with ${result.code}\n${result.output}`)
+    assert.ok(existsSync(starFile))
+  })
+
+  test.skip('learn can disable future star prompts globally', (t) => {
+    const repo = makeRepo(tempBase, 'learn-star-opt-out')
+    const learnBin = makeLearnModeBin(join(tempBase, 'learn-bin-star-opt-out'))
+    makeFakeGhScript(learnBin)
+    const promptHome = join(tempBase, 'home-learn-star-opt-out')
+    const configPath = join(promptHome, '.skillcraft', 'config.json')
+    mkdirSync(promptHome, { recursive: true })
+    const learnEnv = {
+      ...cliEnv,
+      HOME: promptHome,
+      PATH: `${learnBin}:${process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_VIEWER_HAS_STARRED: 'false',
+      SKILLCRAFT_STAR_PROMPT_RESPONSE: 'd',
+    }
+
+    let result = runCli(['learn', '--agent', 'opencode'], repo, learnEnv)
+    assert.equal(result.code, 0, `${t.name} exited with ${result.code}\n${result.output}`)
+
+    const savedConfig = JSON.parse(readFileSync(configPath, 'utf8'))
+    assert.equal(savedConfig.prompts.starSkillcraftDisabled, true)
+
+    result = runCli(['learn', '--agent', 'opencode'], repo, learnEnv)
+    assert.equal(result.code, 0, `${t.name} second run exited with ${result.code}\n${result.output}`)
+    assert.equal(result.output.includes('Star Skillcraft on GitHub? [Y/n/d]'), false)
   })
 
   test('learn preserves existing AGENTS.md content and clears stale learn state', (t) => {
@@ -1097,6 +1154,60 @@ describe('Skillcraft CLI surface smoke tests', () => {
       claimResult.output.includes('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'),
       false,
     )
+
+    runCli(['disable'], repo, cliEnv)
+  })
+
+  test.skip('claim success can prompt to star Skillcraft and default to yes', (t) => {
+    const repo = makeRepo(tempBase, 'claim-star-prompt')
+    const remote = join(tempBase, 'claim-star-prompt-origin.git')
+    const fakeGhDir = join(tempBase, 'fake-gh-claim-star-prompt')
+    const promptHome = join(tempBase, 'home-claim-star-prompt')
+    const starFile = join(tempBase, 'claim-starred.txt')
+
+    writeFileSync(
+      credentialIndexFile,
+      JSON.stringify(
+        [
+          {
+            id: 'skillcraft-gg/hello-world',
+            requirements: {
+              min_commits: 1,
+            },
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    mkdirSync(promptHome, { recursive: true })
+    const fakeGh = makeFakeGhScript(fakeGhDir)
+    const claimEnv = {
+      ...credentialCliEnv,
+      HOME: promptHome,
+      PATH: `${dirname(fakeGh)}:${credentialCliEnv.PATH || process.env.PATH || ''}`,
+      SKILLCRAFT_FAKE_GH_REJECT_LABEL_CREATE: '1',
+      SKILLCRAFT_FAKE_GH_VIEWER_HAS_STARRED: 'false',
+      SKILLCRAFT_FAKE_GH_STAR_FILE: starFile,
+      SKILLCRAFT_STAR_PROMPT_RESPONSE: 'yes',
+      USER: 'local-mac-user',
+    }
+
+    let result = runCli(['enable', '--agent', 'opencode'], repo, cliEnv)
+    assertOk(t, result, 'enabled skillcraft')
+
+    runGit(repo, ['remote', 'add', 'origin', `file://${remote}`])
+    mkdirSync(remote, { recursive: true })
+    runGit(remote, ['init', '--bare'])
+
+    addTrackedProof(repo, 'claim-proof.txt', ['acme/alpha'], claimEnv)
+    runGit(repo, ['push', 'origin', 'HEAD'])
+
+    const claimResult = runCli(['claim', 'skillcraft-gg/hello-world'], repo, claimEnv)
+    assert.equal(claimResult.code, 0, `${t.name} exited with ${claimResult.code}\n${claimResult.output}`)
+    assert.ok(claimResult.output.includes('opened claim: #4711'))
+    assert.ok(existsSync(starFile))
 
     runCli(['disable'], repo, cliEnv)
   })

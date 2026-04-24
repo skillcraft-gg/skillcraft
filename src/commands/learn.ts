@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from 'node:process'
 import { detectAvailableAgents, parseAgentOptions, unsupportedAgentOptions } from '@/core/agents'
 import { launchLearnMode, type LearnModeAgent } from '@/core/learn'
 import { gitRoot, isGitRepo } from '@/core/git'
+import { maybePromptToStarSkillcraft } from '@/lib/starPrompt'
 
 type LearnOptions = {
   agents?: string[]
@@ -20,7 +21,10 @@ export async function runLearn(options: LearnOptions = {}): Promise<void> {
   process.stdout.write('Skillcraft Learn Mode disabled. Run `skillcraft learn` to start another guided session.\n')
   if (result.exitCode !== 0) {
     process.exitCode = result.exitCode
+    return
   }
+
+  await maybePromptToStarSkillcraft()
 }
 
 async function resolveLearnAgent(rawAgents: readonly string[]): Promise<LearnModeAgent> {
