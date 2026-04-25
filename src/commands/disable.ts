@@ -11,6 +11,7 @@ import { gitRoot, isGitRepo } from '@/core/git'
 import { removePostCommitHook } from '@/core/hooks'
 import { aiModelContextPath, localGitDir, localSkillcraftConfig, pendingPath, contextPath, pluginPath } from '@/core/paths'
 import { type AgentIntegration } from '@/core/types'
+import { emitJson, getOutputMode, printHeader, printRows, printSuccess } from '@/lib/output'
 
 type DisableOptions = {
   agents?: string[]
@@ -32,12 +33,42 @@ export async function runDisable(options: DisableOptions = {}): Promise<void> {
   const remainingAgents = currentAgents.filter((agent) => !targetAgents.includes(agent))
   if (remainingAgents.length) {
     await saveEnabledAgents(root, remainingAgents)
-    process.stdout.write(`disabled skillcraft agents for ${root} (remaining: ${remainingAgents.join(', ')})\n`)
+    const message = `disabled skillcraft agents for ${root} (remaining: ${remainingAgents.join(', ')})`
+    if (getOutputMode() === 'json') {
+      emitJson({
+        repo: root,
+        disabled: false,
+        removedAgents: targetAgents,
+        remainingAgents,
+        message,
+      })
+      return
+    }
+
+    printHeader('Skillcraft Updated', root)
+    printSuccess(message)
+    printRows([
+      { label: 'removed agents', value: targetAgents.join(', ') || 'none' },
+      { label: 'remaining agents', value: remainingAgents.join(', '), tone: 'success' },
+    ])
     return
   }
 
   await removeGenericSkillcraftState(root)
-  process.stdout.write(`disabled skillcraft for ${root}\n`)
+  const message = `disabled skillcraft for ${root}`
+  if (getOutputMode() === 'json') {
+    emitJson({
+      repo: root,
+      disabled: true,
+      removedAgents: targetAgents,
+      remainingAgents: [],
+      message,
+    })
+    return
+  }
+
+  printHeader('Skillcraft Disabled', root)
+  printSuccess(message)
 }
 
 function resolveDisableAgents(rawAgents: readonly string[], currentAgents: AgentIntegration[]): AgentIntegration[] {

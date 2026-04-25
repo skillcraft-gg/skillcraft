@@ -1,5 +1,3 @@
-import { createInterface } from 'node:readline/promises'
-import { stdin as input, stdout as output } from 'node:process'
 import { addRepo, loadGlobalConfig, saveGlobalConfig } from '@/core/config'
 import {
   detectAvailableAgents,
@@ -16,6 +14,8 @@ import { installPostCommitHook } from '@/core/hooks'
 import { contextPath, localGitDir, localSkillcraftConfig, pendingPath, skillcraftGlobalDir } from '@/core/paths'
 import { DefaultProofRef, type AgentIntegration } from '@/core/types'
 import { getProvider } from '@/providers'
+import { emitJson, getOutputMode, printHeader, printRows, printSection, printSuccess } from '@/lib/output'
+import { promptMultiSelect } from '@/lib/prompts'
 
 type EnableOptions = {
   agents?: string[]
@@ -62,7 +62,28 @@ export async function runEnable(options: EnableOptions = {}): Promise<void> {
 
   const remote = await gitRemote(root)
   await addRepo({ path: root, remote, enabledAt: new Date().toISOString() })
-  process.stdout.write(`enabled skillcraft for ${root} (agents: ${nextAgents.join(', ')})\n`)
+
+  const message = `enabled skillcraft for ${root} (agents: ${nextAgents.join(', ')})`
+  if (getOutputMode() === 'json') {
+    emitJson({
+      repo: root,
+      enabled: true,
+      agents: nextAgents,
+      remote: remote || undefined,
+      proofBranch: DefaultProofRef,
+      message,
+    })
+    return
+  }
+
+  printHeader('Skillcraft Enabled', root)
+  printSuccess(message)
+  printSection('Configuration')
+  printRows([
+    { label: 'agents', value: nextAgents.join(', '), tone: 'success' },
+    { label: 'proof branch', value: DefaultProofRef },
+    { label: 'remote', value: remote || 'none', tone: remote ? 'default' : 'muted' },
+  ])
 }
 
 async function resolveRequestedAgents(rawAgents: readonly string[]): Promise<AgentIntegration[]> {
@@ -84,39 +105,22 @@ async function resolveRequestedAgents(rawAgents: readonly string[]): Promise<Age
     return available
   }
 
-  if (!input.isTTY || !output.isTTY) {
-    throw new Error('Multiple supported agents detected (codex, opencode). Re-run with --agent codex, --agent opencode, or both.')
-  }
-
   return promptForAgents(available)
 }
 
 async function promptForAgents(available: AgentIntegration[]): Promise<AgentIntegration[]> {
-  const rl = createInterface({ input, output })
-  try {
-    output.write(`Multiple supported agents detected: ${available.join(', ')}\n`)
-    output.write('Select one or more agents to enable (comma-separated, e.g. 1,2):\n')
-    available.forEach((agent, index) => {
-      output.write(`${index + 1}. ${agent}\n`)
-    })
+  const selected = await promptMultiSelect({
+    message: 'Select one or more agents to enable',
+    options: available.map((agent) => ({
+      value: agent,
+      label: agent,
+      hint: `Enable ${agent} integration`,
+    })),
+    requiredMessage: 'No valid agent selection provided.',
+    missingInteractiveMessage: 'Multiple supported agents detected (codex, opencode). Re-run with --agent codex, --agent opencode, or both.',
+  })
 
-    const answer = await rl.question('Agents: ')
-    const selected = sortAgents(answer.split(',').map((value) => {
-      const trimmed = value.trim()
-      const index = Number.parseInt(trimmed, 10)
-      if (Number.isFinite(index) && index >= 1 && index <= available.length) {
-        return available[index - 1]
-      }
-      return parseAgentOptions([trimmed])[0]
-    }).filter((value): value is AgentIntegration => !!value))
-
-    if (!selected.length) {
-      throw new Error('No valid agent selection provided.')
-    }
-    return selected
-  } finally {
-    rl.close()
-  }
+  return sortAgents(selected)
 }
 
 function sortAgents(agents: readonly AgentIntegration[]): AgentIntegration[] {

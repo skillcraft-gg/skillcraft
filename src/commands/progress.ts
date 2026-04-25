@@ -4,7 +4,7 @@ import { loadProofFromRepo } from '@/core/progress'
 import { addTrackedCredential, loadRepos, loadTrackedCredentials, removeTrackedCredential } from '@/core/config'
 import { assertNonEmpty } from '@/core/validation'
 import { evaluateRequirements, getCredentialIndexEntries, type CredentialIndexEntry, type CredentialRequirementResult, type RequirementCheck } from '@/core/credentials'
-import { printLines } from '@/lib/output'
+import { emitJson, getOutputMode, printBulletList, printEmpty, printHeader, printRows, printSection, printSuccess, printWarning } from '@/lib/output'
 
 type ProgressOutputMode = {
   outputMode?: 'text' | 'json'
@@ -69,13 +69,14 @@ async function resolveTrackedRepos(): Promise<string[]> {
 }
 
 export async function runProgress(options: ProgressOutputMode = {}): Promise<void> {
+  const outputMode = options.outputMode ?? getOutputMode()
   const tracked = await resolveTrackedRepos()
   const trackedCredentials = await loadTrackedCredentials()
 
   const trackedCredList = trackedCredentials.credentials
   if (!trackedCredList.length) {
-    if (options.outputMode === 'json') {
-      printJsonResult(
+    if (outputMode === 'json') {
+      emitJson(
         buildPayload({
           tracked,
           trackedCredentialsCount: 0,
@@ -87,7 +88,8 @@ export async function runProgress(options: ProgressOutputMode = {}): Promise<voi
       )
       return
     }
-    process.stdout.write('no credentials tracked\n')
+    printHeader('Credential Progress')
+    printEmpty('no credentials tracked')
     return
   }
 
@@ -143,33 +145,42 @@ export async function runProgress(options: ProgressOutputMode = {}): Promise<voi
 
   payload.credentials = evaluated
 
-  if (options.outputMode === 'json') {
-    printJsonResult(payload)
+  if (outputMode === 'json') {
+    emitJson(payload)
     return
   }
 
-  const lines = [] as string[]
-  lines.push(`tracked credentials: ${trackedCredList.length}`)
-  lines.push(`tracked repositories: ${tracked.length}`)
-  lines.push(`proof files: ${proofFiles}`)
-  lines.push(`proof commits: ${provenCommitList.length}`)
-  lines.push(`proof repositories: ${provenRepoList.length}`)
-  lines.push('')
+  printHeader('Credential Progress')
+  printSection('Evidence')
+  printRows([
+    { label: 'tracked credentials', value: trackedCredList.length },
+    { label: 'tracked repositories', value: tracked.length },
+    { label: 'proof files', value: proofFiles, tone: proofFiles ? 'success' : 'muted' },
+    { label: 'proof commits', value: provenCommitList.length, tone: provenCommitList.length ? 'success' : 'muted' },
+    { label: 'proof repositories', value: provenRepoList.length, tone: provenRepoList.length ? 'success' : 'muted' },
+  ])
 
+  printSection('Credentials')
   for (const entry of evaluated) {
-    lines.push(`${entry.credentialId}: ${entry.status}`)
-    lines.push(`  checks: ${entry.passed ? 'passed' : 'blocked'}`)
-    lines.push(`  proof scope: ${entry.proofFiles} proofs, ${entry.provenCommits}/${entry.requiredMinCommits} commits, ${entry.provenRepositories}/${entry.requiredMinRepositories} repositories`)
-    if (entry.reasons.length) {
-      lines.push('  reasons:')
-      for (const reason of entry.reasons) {
-        lines.push(`    - ${reason}`)
-      }
+    const summary = `${entry.credentialId}: ${entry.status}`
+    if (entry.passed) {
+      printSuccess(summary)
+    } else {
+      printWarning(summary)
     }
-    lines.push('')
-  }
 
-  printLines(lines)
+    printRows([
+      { label: 'checks', value: entry.passed ? 'passed' : 'blocked', tone: entry.passed ? 'success' : 'warning' },
+      {
+        label: 'proof scope',
+        value: `${entry.proofFiles} proofs, ${entry.provenCommits}/${entry.requiredMinCommits} commits, ${entry.provenRepositories}/${entry.requiredMinRepositories} repositories`,
+      },
+    ])
+
+    if (entry.reasons.length) {
+      printBulletList(entry.reasons)
+    }
+  }
 }
 
 export async function runProgressTrack(rawId: string): Promise<void> {
@@ -180,21 +191,33 @@ export async function runProgressTrack(rawId: string): Promise<void> {
   }
 
   const added = await addTrackedCredential(id)
-  if (!added) {
-    process.stdout.write(`credential already tracked: ${id}\n`)
+  const message = added ? `tracking credential: ${id}` : `credential already tracked: ${id}`
+  if (getOutputMode() === 'json') {
+    emitJson({ id, tracked: true, added, message })
     return
   }
-  process.stdout.write(`tracking credential: ${id}\n`)
+
+  if (!added) {
+    printWarning(message)
+    return
+  }
+  printSuccess(message)
 }
 
 export async function runProgressUntrack(rawId: string): Promise<void> {
   const id = assertNonEmpty(rawId, 'credential id')
   const removed = await removeTrackedCredential(id)
-  if (!removed) {
-    process.stdout.write(`credential not tracked: ${id}\n`)
+  const message = removed ? `untracked credential: ${id}` : `credential not tracked: ${id}`
+  if (getOutputMode() === 'json') {
+    emitJson({ id, tracked: false, removed, message })
     return
   }
-  process.stdout.write(`untracked credential: ${id}\n`)
+
+  if (!removed) {
+    printWarning(message)
+    return
+  }
+  printSuccess(message)
 }
 
 function buildPayload(params: {
@@ -215,10 +238,6 @@ function buildPayload(params: {
     },
     credentials: params.evaluated,
   }
-}
-
-function printJsonResult(payload: ProgressPayload) {
-  process.stdout.write(`${JSON.stringify(payload)}\n`)
 }
 
 function mapCredentials(index: CredentialIndexEntry[]): Map<string, CredentialIndexEntry> {

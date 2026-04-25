@@ -2,6 +2,7 @@ import { isEnabled } from '@/core/state'
 import { gitLogWithMessages } from '@/core/git'
 import { readProof } from '@/core/proof'
 import { findUnpushedCommitsWithOptions, listRemotes } from '@/core/remote'
+import { CommandError, emitJson, emitJsonError, getOutputMode, printBulletList, printHeader, printRows, printSection, printSuccess, printWarning } from '@/lib/output'
 
 export async function runVerify(): Promise<void> {
   const repoPath = process.cwd()
@@ -19,16 +20,18 @@ export async function runVerify(): Promise<void> {
 
   let missing = 0
   const proofCommits: string[] = []
+  const missingProofs: string[] = []
+  const invalidProofs: string[] = []
   for (const id of referenced) {
     const proof = await readProof(repoPath, id)
     if (!proof) {
       missing += 1
-      process.stdout.write(`missing proof object: ${id}\n`)
+      missingProofs.push(id)
       continue
     }
     if (!proof.commit || !proof.timestamp) {
       missing += 1
-      process.stdout.write(`invalid proof object: ${id}\n`)
+      invalidProofs.push(id)
       continue
     }
 
@@ -36,43 +39,83 @@ export async function runVerify(): Promise<void> {
   }
 
   if (missing > 0) {
-    process.stdout.write(`verify failed: ${missing} missing/invalid proofs\n`)
+    if (getOutputMode() === 'json') {
+      emitJsonError(new CommandError(`verify failed: ${missing} missing/invalid proofs`, 'VERIFY_FAILED'))
+    } else {
+      printHeader('Verify')
+      printWarning(`verify failed: ${missing} missing/invalid proofs`)
+      if (missingProofs.length) {
+        printSection('Missing proof objects')
+        printBulletList(missingProofs.map((id) => `missing proof object: ${id}`))
+      }
+      if (invalidProofs.length) {
+        printSection('Invalid proof objects')
+        printBulletList(invalidProofs.map((id) => `invalid proof object: ${id}`))
+      }
+    }
     process.exitCode = 1
     return
   }
 
-  process.stdout.write(`verify passed: ${referenced.length} commit proofs resolved\n`)
-
   const remotes = await listRemotes(repoPath)
-  if (!remotes.length) {
-    process.stdout.write('⚠️ Warning: no git remotes configured for repository\n')
-    return
-  }
+  const remoteResults: Array<{ remote: string; status: string; missingCommits: string[] }> = []
 
-  const sources = remotes.map((remote) => ({ repo: remote.url, commits: proofCommits }))
-  const missingCommits = await findUnpushedCommitsWithOptions(sources, { normalize: false })
+  if (remotes.length) {
+    const sources = remotes.map((remote) => ({ repo: remote.url, commits: proofCommits }))
+    const missingCommits = await findUnpushedCommitsWithOptions(sources, { normalize: false })
 
-  const missingByRemote = new Map<string, string[]>()
-  for (const { repo, commit } of missingCommits) {
-    const missingForRemote = missingByRemote.get(repo)
-    if (missingForRemote) {
-      missingForRemote.push(commit)
-    } else {
-      missingByRemote.set(repo, [commit])
+    const missingByRemote = new Map<string, string[]>()
+    for (const { repo, commit } of missingCommits) {
+      const missingForRemote = missingByRemote.get(repo)
+      if (missingForRemote) {
+        missingForRemote.push(commit)
+      } else {
+        missingByRemote.set(repo, [commit])
+      }
+    }
+
+    const uniqueMissing = (remoteUrl: string): string[] => {
+      const values = missingByRemote.get(remoteUrl)
+      return values ? Array.from(new Set(values)) : []
+    }
+
+    for (const remote of remotes) {
+      const missingHere = uniqueMissing(remote.url)
+      remoteResults.push({
+        remote: remote.url,
+        status: missingHere.length > 0 ? 'missing' : 'ok',
+        missingCommits: missingHere,
+      })
     }
   }
 
-  const uniqueMissing = (remoteUrl: string): string[] => {
-    const values = missingByRemote.get(remoteUrl)
-    return values ? Array.from(new Set(values)) : []
+  if (getOutputMode() === 'json') {
+    emitJson({
+      status: 'passed',
+      referencedProofs: referenced.length,
+      proofCommits,
+      remotes: remoteResults,
+      warnings: !remotes.length ? ['no git remotes configured for repository'] : remoteResults
+        .filter((entry) => entry.missingCommits.length > 0)
+        .map((entry) => `proof commits not pushed to ${entry.remote}: ${entry.missingCommits.join(', ')}`),
+    })
+    return
   }
 
-  for (const remote of remotes) {
-    const missingHere = uniqueMissing(remote.url)
-    if (missingHere.length > 0) {
-      process.stdout.write(`⚠️ Warning: proof commits not pushed to ${remote.url}: ${missingHere.join(', ')}\n`)
+  printHeader('Verify')
+  printSuccess(`verify passed: ${referenced.length} commit proofs resolved`)
+
+  if (!remotes.length) {
+    printWarning('⚠️ Warning: no git remotes configured for repository')
+    return
+  }
+
+  printSection('Remotes')
+  for (const remote of remoteResults) {
+    if (remote.missingCommits.length > 0) {
+      printWarning(`⚠️ Warning: proof commits not pushed to ${remote.remote}: ${remote.missingCommits.join(', ')}`)
     } else {
-      process.stdout.write(`remote status: ${remote.url} (all referenced proof commits present)\n`)
+      printRows([{ label: 'remote status', value: `${remote.remote} (all referenced proof commits present)`, tone: 'success' }])
     }
   }
 }

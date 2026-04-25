@@ -8,6 +8,7 @@ import { loadGlobalConfig } from '@/core/config'
 import { gitIsAncestor, gitRemote } from '@/core/git'
 import { findUnpushedCommits } from '@/core/remote'
 import { maybePromptToStarSkillcraft } from '@/lib/starPrompt'
+import { CommandError, emitJson, emitJsonError, getOutputMode, printBulletList, printEmpty, printHeader, printRows, printSection, printSuccess, printWarning } from '@/lib/output'
 
 export async function runClaimList(): Promise<void> {
   const config = await loadGlobalConfig()
@@ -23,16 +24,30 @@ export async function runClaimList(): Promise<void> {
     )
   })
 
-  if (!matching.length) {
-    process.stdout.write(`no claims found for ${claimant || 'user'}\n`)
+  const claims = matching.map((issue) => ({
+    number: issue.number,
+    title: issue.title,
+    status: getClaimLifecycleStatus(issue.labels?.map((entry) => entry?.name) || []),
+    url: issue.url,
+  }))
+
+  if (getOutputMode() === 'json') {
+    emitJson({
+      claimant,
+      count: claims.length,
+      claims,
+    })
     return
   }
 
-  for (const issue of matching) {
-    process.stdout.write(`#${issue.number} ${issue.title} (${getClaimLifecycleStatus(issue.labels?.map((entry) => entry?.name) || [])})\n`)
+  if (!matching.length) {
+    printHeader('Claims')
+    printEmpty(`no claims found for ${claimant || 'user'}`)
+    return
   }
 
-  return
+  printHeader('Claims', claimant)
+  printBulletList(claims.map((issue) => `#${issue.number} ${issue.title} (${issue.status})`))
 }
 
 export async function runClaimStatus(reference: string): Promise<void> {
@@ -52,8 +67,32 @@ export async function runClaimStatus(reference: string): Promise<void> {
 
   const status = await provider.getIssueStatus('skillcraft-gg/credential-ledger', issue)
   const runs = await provider.listClaimProcessingRuns('skillcraft-gg/credential-ledger', issue)
+
+  const payload = {
+    credential,
+    claimant,
+    issue,
+    state: getClaimLifecycleStatus(status.labels),
+    labels: status.labels,
+    url: status.url,
+    processing: runs.length
+      ? {
+        status: runs[0].status,
+        conclusion: runs[0].conclusion ?? undefined,
+        url: runs[0].url,
+        attempts: runs.length,
+      }
+      : undefined,
+  }
+
+  if (getOutputMode() === 'json') {
+    emitJson(payload)
+    return
+  }
+
+  printHeader('Claim Status', credential)
   process.stdout.write(`issue #${issue}\n`)
-  process.stdout.write(`state: ${getClaimLifecycleStatus(status.labels)}\n`)
+  process.stdout.write(`state: ${payload.state}\n`)
   process.stdout.write(`labels: ${status.labels.join(', ') || 'none'}\n`)
   process.stdout.write(`url: ${status.url}\n`)
 
@@ -63,8 +102,8 @@ export async function runClaimStatus(reference: string): Promise<void> {
   }
 
   const latest = runs[0]
-  const conclusion = latest.conclusion ? ` (${latest.conclusion})` : ''
-  process.stdout.write(`processing actions: ${latest.status}${conclusion}\n`)
+  printSection('Processing')
+  process.stdout.write(`processing actions: ${latest.status}${latest.conclusion ? ` (${latest.conclusion})` : ''}\n`)
   process.stdout.write(`latest run: ${latest.url}\n`)
   if (runs.length > 1) {
     process.stdout.write(`previous attempts: ${runs.length - 1}\n`)
@@ -132,10 +171,16 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
 
   const unpushed = await findUnpushedCommits(payload.sources)
   if (unpushed.length > 0) {
-    process.stdout.write('⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.\n')
-    for (const entry of unpushed) {
-      process.stdout.write(`- ${entry.commit} in ${entry.repo}\n`)
+    const message = '⚠️ Warning: some claim commits may not be pushed yet. Please push recent commits before re-submitting the claim.'
+    if (getOutputMode() === 'json') {
+      emitJsonError(new CommandError(message, 'UNPUSHED_COMMITS'))
+      process.exitCode = 1
+      return
     }
+
+    printHeader('Claim Blocked', credential)
+    printWarning(message)
+    printBulletList(unpushed.map((entry) => `${entry.commit} in ${entry.repo}`))
     process.exitCode = 1
     return
   }
@@ -144,10 +189,27 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
     const existing = await findOpenClaimIssue(provider, normalizedCredential, normalizedClaimant)
     if (existing) {
       const url = existing.url || await provider.getIssueUrl('skillcraft-gg/credential-ledger', existing.number)
-      process.stdout.write('claim already submitted\n')
-      process.stdout.write(`issue: #${existing.number}\n`)
-      process.stdout.write(`state: ${getClaimLifecycleStatus(existing.labels?.map((entry) => entry?.name) || [])}\n`)
-      process.stdout.write(`url: ${url}\n`)
+      const state = getClaimLifecycleStatus(existing.labels?.map((entry) => entry?.name) || [])
+      if (getOutputMode() === 'json') {
+        emitJson({
+          credential,
+          claimant,
+          issue: existing.number,
+          state,
+          url,
+          alreadySubmitted: true,
+          message: 'claim already submitted',
+        })
+        return
+      }
+
+      printHeader('Claim Status', credential)
+      printWarning('claim already submitted')
+      printRows([
+        { label: 'issue', value: `#${existing.number}` },
+        { label: 'state', value: state, tone: 'warning' },
+        { label: 'url', value: url },
+      ])
       return
     }
 
@@ -156,8 +218,21 @@ export async function runClaim(credential: string, opts: { allRepos?: boolean; r
 
   const yamlPayload = yaml.stringify(payload)
   const issue = await provider.createIssue('skillcraft-gg/credential-ledger', `claim: ${credential}`, yamlPayload)
-  process.stdout.write(`opened claim: #${issue}\n`)
-  process.stdout.write(`payload:\n${yamlPayload}\n`)
+  if (getOutputMode() === 'json') {
+    emitJson({
+      credential,
+      claimant,
+      issue,
+      payload,
+      yaml: yamlPayload,
+      message: `opened claim: #${issue}`,
+    })
+  } else {
+    printHeader('Claim Opened', credential)
+    printSuccess(`opened claim: #${issue}`)
+    printSection('Claim Payload')
+    process.stdout.write(`${yamlPayload}\n`)
+  }
   await maybePromptToStarSkillcraft()
 }
 

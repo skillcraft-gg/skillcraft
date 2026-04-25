@@ -10,6 +10,7 @@ import { loadGlobalConfig } from '@/core/config'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { splitArgPair } from '@/core/validation'
+import { emitJson, getOutputMode, printHeader, printRows, printSuccess, printWarning } from '@/lib/output'
 
 const execPromise = promisify(execFile)
 
@@ -28,7 +29,15 @@ export async function runLoadoutUse(id: string): Promise<void> {
     active.push(id)
   }
   await writeJson(contextPath(cwd), { activeLoadouts: active })
-  process.stdout.write(`activated loadout: ${id}\n`)
+  const message = `activated loadout: ${id}`
+  if (getOutputMode() === 'json') {
+    emitJson({ id, activeLoadouts: active, message })
+    return
+  }
+
+  printHeader('Loadout Activated')
+  printSuccess(message)
+  printRows([{ label: 'active loadouts', value: active.join(', '), tone: 'success' }])
 }
 
 export async function runLoadoutClear(): Promise<void> {
@@ -37,7 +46,14 @@ export async function runLoadoutClear(): Promise<void> {
     throw new Error('Repository is not enabled')
   }
   await writeJson(contextPath(cwd), { activeLoadouts: [] })
-  process.stdout.write('cleared active loadouts\n')
+  const message = 'cleared active loadouts'
+  if (getOutputMode() === 'json') {
+    emitJson({ activeLoadouts: [], message })
+    return
+  }
+
+  printHeader('Loadouts Cleared')
+  printSuccess(message)
 }
 
 export async function runLoadoutShare(id: string): Promise<void> {
@@ -60,6 +76,8 @@ export async function runLoadoutShare(id: string): Promise<void> {
   const remote = `skillcraft-gg/loadouts`
   const temp = path.join(process.cwd(), '.skillcraft-temp-loadout-share')
   const branch = `skillcraft-loadout-${owner}-${slugPart}`
+  let pullRequest = 0
+  let prAutoCreated = true
 
   try {
     await fs.rm(temp, { force: true, recursive: true })
@@ -78,14 +96,37 @@ export async function runLoadoutShare(id: string): Promise<void> {
     await runGit(temp, ['push', '-u', 'origin', branch]).catch(() => {
       throw new Error('unable to push loadout publish branch')
     })
-    await provider.createPullRequest(
+    pullRequest = await provider.createPullRequest(
       remote,
       branch,
       `Loadout publish: ${cleanId}`,
     ).catch(() => {
-      process.stdout.write('unable to create PR automatically. Please open one manually from your branch.\n')
+      prAutoCreated = false
+      return 0
     })
-    process.stdout.write(`loadout publish workflow completed for ${cleanId}\n`)
+
+    const message = `loadout publish workflow completed for ${cleanId}`
+    if (getOutputMode() === 'json') {
+      emitJson({
+        id: cleanId,
+        remote,
+        branch,
+        pullRequest,
+        prAutoCreated,
+        message,
+      })
+      return
+    }
+
+    printHeader('Loadout Publish')
+    if (!prAutoCreated) {
+      printWarning('unable to create PR automatically. Please open one manually from your branch.')
+    }
+    printSuccess(message)
+    printRows([
+      { label: 'branch', value: branch },
+      { label: 'pull request', value: pullRequest || 'manual', tone: pullRequest ? 'success' : 'warning' },
+    ])
   } finally {
     await fs.rm(temp, { force: true, recursive: true })
   }

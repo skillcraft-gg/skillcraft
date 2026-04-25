@@ -20,6 +20,7 @@ import { runClaim, runClaimList, runClaimStatus } from './commands/claim.js'
 import { runLoadoutUse, runLoadoutClear, runLoadoutShare } from './commands/loadout.js'
 import { runAgentHook, runHook, runHookPush } from './commands/internalHook.js'
 import { runLearn } from './commands/learn.js'
+import { configureOutputMode, emitJsonError, getOutputMode, isJsonOutput, normalizeError, printError } from './lib/output.js'
 
 const program = new Command()
 
@@ -61,9 +62,8 @@ reposCommand.command('prune').description('Remove unavailable repository entries
 const progressCommand = program.command('progress').description('Show progress for tracked credentials')
 progressCommand
 .option('--refresh', 'refresh the local credential index cache before evaluating progress')
-.action((options, command) => {
-  const outputMode = command.parent?.opts()?.json ? 'json' : 'text'
-  withCommand(() => runProgress({ outputMode, refreshIndex: options.refresh }))()
+.action((options) => {
+  withCommand(() => runProgress({ outputMode: getOutputMode(), refreshIndex: options.refresh }))()
 })
 
 progressCommand
@@ -100,9 +100,8 @@ skillsCommand
 skillsCommand
   .command('inspect <id>')
   .description('Show detailed information for a registry skill')
-  .action((id, _options, command) => {
-    const outputMode = command.parent?.parent?.opts()?.json ? 'json' : 'text'
-    withCommand(() => runSkillsInspect(id, { outputMode }))()
+  .action((id) => {
+    withCommand(() => runSkillsInspect(id, { outputMode: getOutputMode() }))()
   })
 
 skillsCommand
@@ -110,9 +109,8 @@ skillsCommand
   .description('Search the published skill index')
   .option('--source <source>', 'filter to a registry source')
   .option('--limit <n>', 'limit number of results', (value) => Number.parseInt(value, 10))
-  .action((query, options, command) => {
-    const outputMode = command.parent?.parent?.opts()?.json ? 'json' : 'text'
-    withCommand(() => runSkillsSearch(query, { source: options.source, limit: options.limit, outputMode }))()
+  .action((query, options) => {
+    withCommand(() => runSkillsSearch(query, { source: options.source, limit: options.limit, outputMode: getOutputMode() }))()
   })
 
 program
@@ -189,7 +187,12 @@ program
 function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | void>(fn: T): (...args: Parameters<T>) => Promise<void> {
   return async (...args: Parameters<T>) => {
     await Promise.resolve(fn(...args)).catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      const normalized = normalizeError(error)
+      if (isJsonOutput()) {
+        emitJsonError(normalized)
+      } else {
+        printError(normalized.message)
+      }
       process.exitCode = 1
     })
   }
@@ -198,5 +201,7 @@ function withCommand<T extends (...args: readonly unknown[]) => Promise<void> | 
 function collectStrings(value: string, previous: string[]): string[] {
   return [...previous, value]
 }
+
+configureOutputMode(process.argv)
 
 await program.parseAsync(process.argv)

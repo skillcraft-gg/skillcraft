@@ -1,7 +1,7 @@
-import { createInterface } from 'node:readline/promises'
-import { stdin as input, stdout as output } from 'node:process'
 import { loadGlobalConfig, saveGlobalConfig } from '@/core/config'
 import { getProvider } from '@/providers'
+import { getOutputMode, isInteractiveOutputAllowed, printInfo } from '@/lib/output'
+import { promptSelect } from '@/lib/prompts'
 
 const skillcraftRepo = 'skillcraft-gg/skillcraft'
 
@@ -26,49 +26,44 @@ export async function maybePromptToStarSkillcraft(): Promise<void> {
     return
   }
 
-  const rl = createInterface({ input, output })
-  try {
-    const forcedAnswer = process.env.SKILLCRAFT_STAR_PROMPT_RESPONSE
-    while (true) {
-      const answer = normalizeAnswer(
-        forcedAnswer !== undefined
-          ? forcedAnswer
-          : await rl.question('Star Skillcraft on GitHub? [Y/n/d] '),
-      )
-      if (!answer || answer === 'y' || answer === 'yes') {
-        try {
-          await provider.starRepo(skillcraftRepo)
-          output.write('Thanks for starring Skillcraft on GitHub.\n')
-        } catch {
-          output.write('Could not star Skillcraft on GitHub automatically.\n')
-        }
-        return
-      }
+  const forcedAnswer = process.env.SKILLCRAFT_STAR_PROMPT_RESPONSE
+  const answer = normalizeAnswer(
+    forcedAnswer !== undefined
+      ? forcedAnswer
+      : await promptSelect({
+        message: 'Star Skillcraft on GitHub?',
+        options: [
+          { value: 'yes', label: 'Yes', hint: 'Star repo now' },
+          { value: 'no', label: 'No', hint: 'Skip this time' },
+          { value: 'disable', label: 'Do not ask again', hint: 'Turn prompt off' },
+        ],
+        missingInteractiveMessage: 'Interactive prompt unavailable. Re-run in a TTY to answer the star prompt.',
+      }),
+  )
 
-      if (answer === 'n' || answer === 'no') {
-        return
-      }
-
-      if (answer === 'd' || answer === 'dont' || answer === "don't ask again" || answer === 'dont ask again') {
-        await saveGlobalConfig({
-          ...config,
-          prompts: {
-            ...(config.prompts ?? {}),
-            starSkillcraftDisabled: true,
-          },
-        })
-        output.write('Okay. Skillcraft will not ask again.\n')
-        return
-      }
-
-      if (forcedAnswer !== undefined) {
-        return
-      }
-
-      output.write('Please enter Y, n, or d.\n')
+  if (!answer || answer === 'y' || answer === 'yes') {
+    try {
+      await provider.starRepo(skillcraftRepo)
+      printInfo('Thanks for starring Skillcraft on GitHub.')
+    } catch {
+      printInfo('Could not star Skillcraft on GitHub automatically.')
     }
-  } finally {
-    rl.close()
+    return
+  }
+
+  if (answer === 'n' || answer === 'no') {
+    return
+  }
+
+  if (answer === 'd' || answer === 'disable' || answer === 'dont' || answer === "don't ask again" || answer === 'dont ask again') {
+    await saveGlobalConfig({
+      ...config,
+      prompts: {
+        ...(config.prompts ?? {}),
+        starSkillcraftDisabled: true,
+      },
+    })
+    printInfo('Okay. Skillcraft will not ask again.')
   }
 }
 
@@ -77,5 +72,5 @@ function normalizeAnswer(value: string): string {
 }
 
 function isInteractivePromptAllowed(): boolean {
-  return (input.isTTY && output.isTTY) || process.env.SKILLCRAFT_FORCE_TTY === '1' || process.env.SKILLCRAFT_STAR_PROMPT_RESPONSE !== undefined
+  return getOutputMode() !== 'json' && (isInteractiveOutputAllowed() || process.env.SKILLCRAFT_STAR_PROMPT_RESPONSE !== undefined)
 }

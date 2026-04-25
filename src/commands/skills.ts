@@ -20,6 +20,7 @@ import {
   registerInstalledSkill,
 } from '@/core/installedSkills'
 import type { InstalledSkillInstall } from '@/core/types'
+import { emitJson, getOutputMode, printBulletList, printEmpty, printHeader, printRows, printSuccess, printWarning } from '@/lib/output'
 
 const execPromise = promisify(execFile)
 
@@ -94,6 +95,8 @@ export async function runSkillsPublish(slug: string): Promise<void> {
   const destination = 'skillcraft-gg/skills-registry'
   const branch = `skillcraft-skill-${owner}-${slugPart}`
   const temp = path.join(process.cwd(), '.skillcraft-temp-skill-publish')
+  let pullRequest = 0
+  let prAutoCreated = true
 
   try {
     await fs.rm(temp, { force: true, recursive: true })
@@ -112,17 +115,40 @@ export async function runSkillsPublish(slug: string): Promise<void> {
     await runGit(temp, ['push', '-u', 'origin', branch]).catch(() => {
       throw new Error('unable to push skill publish branch')
     })
-    await provider.createPullRequest(destination, branch, `Publish skill: ${ref}`).catch(() => {
-      process.stdout.write('unable to create PR automatically. Please open one manually from your branch.\n')
+    pullRequest = await provider.createPullRequest(destination, branch, `Publish skill: ${ref}`).catch(() => {
+      prAutoCreated = false
+      return 0
     })
 
-    process.stdout.write(`published skill ${ref} from ${destination}\n`)
+    const message = `published skill ${ref} from ${destination}`
+    if (getOutputMode() === 'json') {
+      emitJson({
+        id: ref,
+        destination,
+        branch,
+        pullRequest,
+        prAutoCreated,
+        message,
+      })
+      return
+    }
+
+    printHeader('Skill Publish', ref)
+    if (!prAutoCreated) {
+      printWarning('unable to create PR automatically. Please open one manually from your branch.')
+    }
+    printSuccess(message)
+    printRows([
+      { label: 'branch', value: branch },
+      { label: 'pull request', value: pullRequest || 'manual', tone: pullRequest ? 'success' : 'warning' },
+    ])
   } finally {
     await fs.rm(temp, { force: true, recursive: true })
   }
 }
 
 export async function runSkillsAdd(rawId: string): Promise<void> {
+  const outputMode = getOutputMode()
   const cwd = process.cwd()
   if (!(await isEnabled(cwd))) {
     throw new Error('Repository is not enabled')
@@ -137,7 +163,7 @@ export async function runSkillsAdd(rawId: string): Promise<void> {
     throw new Error('skill versions are not supported for installation yet')
   }
 
-  const entries = await loadSearchIndexEntries('text')
+  const entries = await loadSearchIndexEntries(outputMode)
   const entry = entries.find((candidate) => candidate.id === parsed.id)
   if (!entry) {
     throw new Error(`skill ${parsed.id} is not listed in the search index`)
@@ -167,17 +193,39 @@ export async function runSkillsAdd(rawId: string): Promise<void> {
     await fs.rm(temp, { force: true, recursive: true })
   }
 
-  process.stdout.write(`installed skill: ${entry.id} -> ${path.posix.join('.agents', 'skills', installedName)}\n`)
+  const installPath = path.posix.join('.agents', 'skills', installedName)
+  const message = `installed skill: ${entry.id} -> ${installPath}`
+  if (outputMode === 'json') {
+    emitJson({
+      id: entry.id,
+      path: installPath,
+      install,
+      message,
+    })
+    return
+  }
+
+  printHeader('Skill Installed', entry.id)
+  printSuccess(message)
 }
 
 export async function runSkillsValidate(): Promise<void> {
   const cwd = process.cwd()
-  const checks = [
+  const checks: Array<[string, boolean]> = [
     ['SKILL.md', await exists(path.join(cwd, 'SKILL.md'))],
     ['skill.yaml', await exists(path.join(cwd, 'skill.yaml'))],
   ]
+
+  if (getOutputMode() === 'json') {
+    emitJson({
+      checks: checks.map(([name, ok]) => ({ name, status: ok ? 'ok' : 'missing' })),
+    })
+    return
+  }
+
+  printHeader('Skill Validation')
   for (const [name, ok] of checks) {
-    process.stdout.write(`${name}: ${ok ? 'ok' : 'missing'}\n`)
+    printRows([{ label: name, value: ok ? 'ok' : 'missing', tone: ok ? 'success' : 'warning' }])
   }
 }
 
@@ -201,19 +249,32 @@ export async function runSkillsList(): Promise<void> {
     skills.add(skill.id)
   }
 
-  if (!skills.size) {
-    process.stdout.write('no skills detected\n')
+  const listed = Array.from(skills).sort()
+
+  if (getOutputMode() === 'json') {
+    emitJson({
+      count: listed.length,
+      skills: listed,
+    })
     return
   }
 
-  const list = Array.from(skills).sort().join('\n')
-  process.stdout.write(`skills detected (${skills.size}):\n${list}\n`)
+  if (!skills.size) {
+    printHeader('Skills')
+    printEmpty('no skills detected')
+    return
+  }
+
+  printHeader('Skills')
+  printSuccess(`skills detected (${skills.size})`)
+  printBulletList(listed)
 }
 
 export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOptions = {}): Promise<void> {
-  const entries = await loadSearchIndexEntries(options.outputMode)
+  const outputMode = options.outputMode ?? getOutputMode()
+  const entries = await loadSearchIndexEntries(outputMode)
   if (!entries.length) {
-    if (options.outputMode === 'json') {
+    if (outputMode === 'json') {
       process.stdout.write(`${JSON.stringify({
         query: rawQuery?.trim(),
         source: options.source?.trim(),
@@ -223,7 +284,8 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
         message: 'no skills indexed',
       })}\n`)
     } else {
-      process.stdout.write('no skills indexed\n')
+      printHeader('Skill Search')
+      printEmpty('no skills indexed')
     }
     return
   }
@@ -270,7 +332,7 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
   const shown = sorted.slice(0, limit)
   if (!shown.length) {
     const message = query ? `no skills match "${rawQuery?.trim()}"` : 'no skills match current filters'
-    if (options.outputMode === 'json') {
+    if (outputMode === 'json') {
       process.stdout.write(`${JSON.stringify({
         query: rawQuery?.trim(),
         source: options.source?.trim(),
@@ -280,7 +342,8 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
         message,
       })}\n`)
     } else {
-      process.stdout.write(`${message}\n`)
+      printHeader('Skill Search')
+      printEmpty(message)
     }
     return
   }
@@ -294,7 +357,7 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
     return `${entry.id}${name ? ` — ${name}` : ''}${runtime}${tags}${updatedLabel}`
   })
 
-  if (options.outputMode === 'json') {
+  if (outputMode === 'json') {
     const payload = {
       query: rawQuery?.trim(),
       source: options.source?.trim(),
@@ -319,24 +382,27 @@ export async function runSkillsSearch(rawQuery?: string, options: SearchIndexOpt
     return
   }
 
-  process.stdout.write(`${title} (${shown.length}):\n${lines.join('\n')}\n`)
+  printHeader('Skill Search')
+  printSuccess(`${title} (${shown.length}):`)
+  printBulletList(lines)
 }
 
 export async function runSkillsInspect(rawId: string, options: SkillInspectOptions = {}): Promise<void> {
+  const outputMode = options.outputMode ?? getOutputMode()
   const cleanId = assertNonEmpty(rawId, 'skill id')
   const parsed = splitSkillIdentifier(cleanId)
   if (!parsed.id) {
     throw new Error('invalid skill id format')
   }
 
-  const entries = await loadSearchIndexEntries(options.outputMode)
+  const entries = await loadSearchIndexEntries(outputMode)
   const match = entries.find((entry) => entry.id === parsed.id)
   if (!match) {
     throw new Error(`skill ${parsed.id} is not listed in the search index`)
   }
 
   const manifest = await loadSkillManifest(match)
-  if (options.outputMode === 'json') {
+  if (outputMode === 'json') {
     const payload = {
       id: match.id,
       name: match.name,
@@ -357,6 +423,7 @@ export async function runSkillsInspect(rawId: string, options: SkillInspectOptio
   }
 
   const lines = formatInspectOutput(match, manifest)
+  printHeader('Skill Inspect', match.id)
   process.stdout.write(`${lines}\n`)
 }
 
